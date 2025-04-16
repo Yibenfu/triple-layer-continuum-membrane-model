@@ -2,16 +2,23 @@
 #include <iostream>
 #include <armadillo>
 #include <omp.h>
-#include "functions_setup_triangular_mesh.cpp"
+#include "functions_print_and_read.cpp"
+//#include "functions_setup_triangular_mesh.cpp"
 
 /////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////
 // the following are bending energy, volume energy, and local area energy 
 
 // bending energy and forces, area constraint energy and forces, volume constriant energy and forces
-void element_energy_force_regular(bool isInnerLayer, bool isInsertionPatch, mat dots, Param param, double c0, double& Ebe, mat& F_be, mat& F_s, rowvec gqcoeff, cube shape_functions, double a0) {
+void element_energy_force_regular(int whichLayer, bool isInsertionPatch, mat dots, Param param, double C0_spont, double& Ebe, mat& F_be, mat& F_s, rowvec gqcoeff, cube shape_functions, double a0) {
     // F_be is the force related to the curvature; F_s is the force related to the area-constraint; F_v is the force related to the volume-constraint.
     // initialize output parameters
+    double c0 = C0_spont;
+    if ( whichLayer == 0 ){ // inner layer, the sign of memrbane direction is opposite! 
+        c0 = -c0;
+        // The bending energy should be: kc/2*(-2H-c0)^2, equals kc/2*(2H+c0)^2
+        // Therefore, instead of changing H sign, change c0 sign. 
+    }
     Ebe = 0.0;
     F_be.fill(0);
     F_s.fill(0);
@@ -20,7 +27,7 @@ void element_energy_force_regular(bool isInnerLayer, bool isInsertionPatch, mat 
     double S  = param.Sin; 
     double kc = param.kc_in;
     double us = param.us_in/S0;
-    if (isInnerLayer == false){
+    if (whichLayer == 2){ // 0 means inLayer, 2 means outLayer
         S0 = param.S0out; 
         S  = param.Sout; 
         kc = param.kc_out;
@@ -36,7 +43,7 @@ void element_energy_force_regular(bool isInnerLayer, bool isInsertionPatch, mat 
     ///////////////////////////////////////////
     //rowvec gqcoeff = setVMUcoefficient(GaussQuadratureN); 
     for (int i = 0; i < VWU.n_rows; i++) {
-        double ebe = 0.0;
+        double ebe = 0.0; // bending energy
         mat f_be(12,3); f_be.fill(0);
         mat f_cons(12,3); f_cons.fill(0);
         // 12 shape functions
@@ -64,9 +71,9 @@ void element_energy_force_regular(bool isInnerLayer, bool isInsertionPatch, mat 
         rowvec d = a_3;
         rowvec d_1 = a_31;
         rowvec d_2 = a_32;
-        if ( isInnerLayer == true ){ // inner layer, the sign of memrbane direction is opposite! 
-            d = -d; d_1 = -d_1; d_2 = -d_2;
-        }
+        //if ( whichLayer == 0 ){ // inner layer, the sign of memrbane direction is opposite! 
+        //    d = -d; d_1 = -d_1; d_2 = -d_2;
+        //}
         rowvec a1 = cross(a_2,a_3)/sqa;
         rowvec a2 = cross(a_3,a_1)/sqa;
         rowvec a11 = 1.0/sqa/sqa *( (cross(a_21,a_3)+cross(a_2,a_31))*sqa - cross(a_2,a_3)*sqa_1 );
@@ -100,7 +107,7 @@ void element_energy_force_regular(bool isInnerLayer, bool isInsertionPatch, mat 
     }
 }
 
-void element_energy_force_irregularMinus(bool isInnerLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
+void element_energy_force_irregularMinus(int whichLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
     // cunchu1 is the curvature force; cunchu2 is the area-constraint force; cunchu3 is the volume-constraint force.
     // initialize the output parameters
     E_bending = 0.0;
@@ -126,7 +133,7 @@ void element_energy_force_irregularMinus(bool isInnerLayer, bool isInsertionPatc
         mat f1(12,3);  f1.fill(0.0); // f1(12,3)
         mat f2 = f1; 
         double ebe1 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
         mat m1m = strans(M4*matrix);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -136,7 +143,7 @@ void element_energy_force_irregularMinus(bool isInnerLayer, bool isInsertionPatc
         f1.fill(0.0);
         f2.fill(0.0);
         double ebe2 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
         mat m2m = strans(M2*matrix);
         cunchu1 = cunchu1 + m2m*f1;
         cunchu2 = cunchu2 + m2m*f2;
@@ -146,7 +153,7 @@ void element_energy_force_irregularMinus(bool isInnerLayer, bool isInsertionPatc
         f1.fill(0.0);
         f2.fill(0.0);
         double ebe3 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
         mat m3m = strans(M3*matrix);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -157,7 +164,7 @@ void element_energy_force_irregularMinus(bool isInnerLayer, bool isInsertionPatc
     }
 }
 
-void element_energy_force_irregularPlus(bool isInnerLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
+void element_energy_force_irregularPlus(int whichLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
     // cunchu1 is the curvature force; cunchu2 is the area-constraint force; cunchu3 is the volume-constraint force.
     // initialize the output parameters
     E_bending = 0.0;
@@ -183,7 +190,7 @@ void element_energy_force_irregularPlus(bool isInnerLayer, bool isInsertionPatch
         mat f1(12,3);  f1.fill(0.0); // f1(12,3)
         mat f2 = f1; 
         double ebe1 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
         mat m1m = strans(M1*matrix);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -193,7 +200,7 @@ void element_energy_force_irregularPlus(bool isInnerLayer, bool isInsertionPatch
         f1.fill(0.0);
         f2.fill(0.0);
         double ebe2 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
         mat m2m = strans(M2*matrix);
         cunchu1 = cunchu1 + m2m*f1;
         cunchu2 = cunchu2 + m2m*f2;
@@ -203,7 +210,7 @@ void element_energy_force_irregularPlus(bool isInnerLayer, bool isInsertionPatch
         f1.fill(0.0);
         f2.fill(0.0);
         double ebe3 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+1.0));
         mat m3m = strans(M3*matrix);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -214,7 +221,7 @@ void element_energy_force_irregularPlus(bool isInnerLayer, bool isInsertionPatch
     }
 }
 
-void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
+void element_energy_force_pseudoRegular1(int whichLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
     // cunchu1 is the curvature force; cunchu2 is the area-constraint force; cunchu3 is the volume-constraint force.
     // initialize the output parameters
     E_bending = 0.0;
@@ -231,7 +238,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
         mat dots = MM2*newnodes18;    // element 2
         mat f1(12,3);  f1.fill(0.0); mat f2 = f1; 
         double ebe1 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2,  gqcoeff, shape_functions, a0/pow(4.0,1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2,  gqcoeff, shape_functions, a0/pow(4.0,1.0));
         mat m1m = strans(MM2*MM);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -239,7 +246,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
         
         dots = MM3*newnodes18;    // element 3
         double ebe3 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,1.0));
         mat m3m = strans(MM3*MM);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -261,7 +268,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
             mat dots = M4*newnodes17;    // element 4
             mat f1(12,3);  f1.fill(0.0); mat f2 = f1; 
             double ebe1 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m1m = strans(M4*matrix);
             cunchu1 = cunchu1 + m1m*f1;
             cunchu2 = cunchu2 + m1m*f2;
@@ -269,7 +276,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
 
             dots = M2*newnodes17;    // element 2
             double ebe2 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m2m = strans(M2*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -277,7 +284,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
 
             dots = M3*newnodes17;    // element 3
             double ebe3 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m3m = strans(M3*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -303,7 +310,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
             mat dots = M1*newnodes19;    // element 1
             mat f1(12,3);  f1.fill(0.0); mat f2 = f1; 
             double ebe1 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m1m = strans(M1*matrix);
             cunchu1 = cunchu1 + m1m*f1;
             cunchu2 = cunchu2 + m1m*f2;
@@ -311,7 +318,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
 
             dots = M2*newnodes19;    // element 2
             double ebe2 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m2m = strans(M2*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -319,7 +326,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
 
             dots = M3*newnodes19;    // element 3
             double ebe3 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m3m = strans(M3*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -331,7 +338,7 @@ void element_energy_force_pseudoRegular1(bool isInnerLayer, bool isInsertionPatc
     }
 }
 
-void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
+void element_energy_force_pseudoRegular2(int whichLayer, bool isInsertionPatch, mat Dots, Param param, double c0, double& E_bending, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0) {
     // cunchu1 is the curvature force; cunchu2 is the area-constraint force; cunchu3 is the volume-constraint force.
     // initialize the output parameters
     E_bending = 0.0;
@@ -348,7 +355,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
         mat dots = MM2*newnodes18;    // element 2
         mat f1(12,3);  f1.fill(0.0); mat f2 = f1; 
         double ebe1 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2,  gqcoeff, shape_functions, a0/pow(4.0,1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2,  gqcoeff, shape_functions, a0/pow(4.0,1.0));
         mat m1m = strans(MM2*MM);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -356,7 +363,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
         
         dots = MM3*newnodes18;    // element 3
         double ebe3 = 0.0;
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,1.0));
+        element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,1.0));
         mat m3m = strans(MM3*MM);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -378,7 +385,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
             mat dots = M4*newnodes17;    // element 4
             mat f1(12,3);  f1.fill(0.0); mat f2 = f1; 
             double ebe1 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m1m = strans(M4*matrix);
             cunchu1 = cunchu1 + m1m*f1;
             cunchu2 = cunchu2 + m1m*f2;
@@ -386,7 +393,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
 
             dots = M2*newnodes17;    // element 2
             double ebe2 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m2m = strans(M2*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -394,7 +401,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
 
             dots = M3*newnodes17;    // element 3
             double ebe3 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m3m = strans(M3*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -420,7 +427,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
             mat dots = M1*newnodes19;    // element 1
             mat f1(12,3);  f1.fill(0.0); mat f2 = f1; 
             double ebe1 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe1, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m1m = strans(M1*matrix);
             cunchu1 = cunchu1 + m1m*f1;
             cunchu2 = cunchu2 + m1m*f2;
@@ -428,7 +435,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
 
             dots = M2*newnodes19;    // element 2
             double ebe2 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe2, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m2m = strans(M2*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -436,7 +443,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
 
             dots = M3*newnodes19;    // element 3
             double ebe3 = 0.0;
-            element_energy_force_regular(isInnerLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
+            element_energy_force_regular(whichLayer, isInsertionPatch, dots, param, c0, ebe3, f1, f2, gqcoeff, shape_functions, a0/pow(4.0,j+2.0));
             mat m3m = strans(M3*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -449,7 +456,7 @@ void element_energy_force_pseudoRegular2(bool isInnerLayer, bool isInsertionPatc
 }
 
 // to sum up
-void element_energy_force(bool isInnerLayer, bool isInsertionPatch, Row<int> one_ring_nodesin, Param param, double Cin, double& Ebendingin, mat& fbein, mat vertexin, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0){      
+void element_energy_force(int whichLayer, bool isInsertionPatch, Row<int> one_ring_nodesin, Param param, double Cin, double& Ebendingin, mat& fbein, mat vertexin, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, double a0){      
     // regular patch
     if ( one_ring_nodesin(12) == -1 ) { // for regular patch
         mat dotsin(12,3);  // one ring vertices
@@ -459,7 +466,7 @@ void element_energy_force(bool isInnerLayer, bool isInsertionPatch, Row<int> one
         }
         double ebein = 0.0; 
         mat finB(12,3);  mat finS(12,3); // bending or curvature term, area term
-        element_energy_force_regular(isInnerLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, a0); 
+        element_energy_force_regular(whichLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, a0); 
         Ebendingin = ebein;
         for (int j = 0; j < 12; j++) {
             int nodenum = one_ring_nodesin(j);
@@ -475,7 +482,7 @@ void element_energy_force(bool isInnerLayer, bool isInsertionPatch, Row<int> one
         }
         double ebein = 0.0; 
         mat finB(11,3);  mat finS(11,3); // bending or curvature term, area term
-        element_energy_force_irregularMinus(isInnerLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
+        element_energy_force_irregularMinus(whichLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
         Ebendingin = ebein;
         for (int j = 0; j < 11; j++) {
             int nodenum = one_ring_nodesin(j);
@@ -491,7 +498,7 @@ void element_energy_force(bool isInnerLayer, bool isInsertionPatch, Row<int> one
         }
         double ebein = 0.0; 
         mat finB(13,3);  mat finS(13,3); // bending or curvature term, area term
-        element_energy_force_irregularPlus(isInnerLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
+        element_energy_force_irregularPlus(whichLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
         Ebendingin = ebein;
         for (int j = 0; j < 13; j++) {
             int nodenum = one_ring_nodesin(j);
@@ -507,7 +514,7 @@ void element_energy_force(bool isInnerLayer, bool isInsertionPatch, Row<int> one
         }
         double ebein = 0.0; 
         mat finB(12,3);  mat finS(12,3); // bending or curvature term, area term
-        element_energy_force_pseudoRegular1(isInnerLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
+        element_energy_force_pseudoRegular1(whichLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
         Ebendingin = ebein;
         for (int j = 0; j < 12; j++) {
             int nodenum = one_ring_nodesin(j);
@@ -523,7 +530,7 @@ void element_energy_force(bool isInnerLayer, bool isInsertionPatch, Row<int> one
         }
         double ebein = 0.0; 
         mat finB(12,3);  mat finS(12,3); // bending or curvature term, area term
-        element_energy_force_pseudoRegular2(isInnerLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
+        element_energy_force_pseudoRegular2(whichLayer, isInsertionPatch, dotsin, param, Cin, ebein, finB, finS, gqcoeff, shape_functions, subMatrix, a0); 
         Ebendingin = ebein;
         for (int j = 0; j < 12; j++) {
             int nodenum = one_ring_nodesin(j);
@@ -535,100 +542,222 @@ void element_energy_force(bool isInnerLayer, bool isInsertionPatch, Row<int> one
 /////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////
 // thickness energy and forces
-
-void element_energy_force_thickness_regular(bool isInsertionPatch, bool isInnerLayer, mat dotsin, mat dotsout, Param param, double& E, mat& Fin, mat& Fout, rowvec gqcoeff, cube shape_functions){
-    double h0 = param.thickness_in;
-    double kt = param.Kthick_in/pow(h0,2.0);
-    if ( isInnerLayer == false ){
-        h0 = param.thickness_out;
-        kt = param.Kthick_out/pow(h0,2.0);
+void element_energy_force_thickness_regular(bool isInsertionPatch, int whichLayer, mat dotsin, mat dotsout, Param param, rowvec& E, mat& Fin, mat& Fout, double C0_spont, double a0, rowvec gqcoeff, cube shape_functions){
+    // initialize output parameters
+    double c0 = C0_spont;
+    double S0 = param.S0out; double V0 = param.V0out; 
+    double S  = param.Sout;  double V  = param.Vout;
+    double kc = param.kc_out;
+    double us = param.us_out/S0;
+    double uv = 0.0; 
+    double h0 = param.H0C_out; //param.thickness_out;
+    double kt = param.Kthick_out; // height modulus
+    double kg = param.kst_out; // splay-tilt modulus, for tilt divergence
+    if (whichLayer == 0){ // 0 means inLayer, 2 means outLayer
+        S0 = param.S0in; V0 = param.V0in;
+        S  = param.Sin;  V  = param.Vin;
+        kc = param.kc_in;
+        c0 = -c0; // The bending energy should be: kc/2*(-2H-c0)^2, equals kc/2*(2H+c0)^2. 
+                  // Therefore, instead of changing H sign, change c0 sign. 
+        us = param.us_in/S0;
+        h0 = param.H0C_in; //param.thickness_in;
+        kt = param.Kthick_in;
+        kg = param.kst_in;
+        uv = param.uv / V0; // volume constraint only works to the inner layer
+    }
+    if ( param.isGlobalAreaConstraint == false ){
+        us = us/a0;
     }
     if ( isInsertionPatch == true ){
         h0 = h0 - param.insert_dH0;
-        kt = kt/pow(h0-0.5,2.0);
     }
-    //double insertion_depth = param.insertion_depth;
-    E = 0.0; Fout.fill(0.0); Fin.fill(0.0);
+    double ktpen = param.Kthick_constraint; 
+    double ktinsert = param.Kthick_constraint; // param.Kthick_insertion;
+    
+    E.fill(0.0); Fout.fill(0.0); Fin.fill(0.0);
     int GaussQuadratureN = param.GaussQuadratureN;
     mat VWU = setVMU(GaussQuadratureN); 
     
+    mat fout(12,3); fout.fill(0.0); 
+    mat fin(12,3);  fin.fill(0.0);
     for (int i = 0; i < VWU.n_rows; i++) {
-        double e = 0.0;
-        mat fin(12,3); fin.fill(0);
-        mat fout(12,3); fout.fill(0);
         mat sf= shape_functions.slice(i); // 12 shape functions
         // a_1,2,3 covariant vectors; a1,2 contravariant vectors;
-        // inner layer
-        rowvec x(3); trans_time(sf.col(0),dotsin,x);
-        rowvec a_1(3); trans_time(sf.col(1),dotsin,a_1);
-        rowvec a_2(3); trans_time(sf.col(2),dotsin,a_2);
-        rowvec xa = cross(a_1,a_2);
-        double sqa = norm(xa,2);
-        rowvec a_3 = xa/sqa;
-        rowvec a1in = cross(a_2,a_3)/sqa;
-        rowvec a2in = cross(a_3,a_1)/sqa;
-        rowvec xin = x;
-        double sqain = sqa;
-        rowvec din = a_3;
-        // outer layer
-        trans_time(sf.col(0),dotsout,x);
-        trans_time(sf.col(1),dotsout,a_1);
-        trans_time(sf.col(2),dotsout,a_2);
-        xa = cross(a_1,a_2);
-        sqa = norm(xa,2);
-        a_3 = xa/sqa;
-        rowvec a1out = cross(a_2,a_3)/sqa;
-        rowvec a2out = cross(a_3,a_1)/sqa;
-        rowvec xout = x;
-        double sqaout = sqa;
-        rowvec dout = a_3;
- 
-        rowvec h = xout - xin; 
-
-        if ( isInnerLayer == false ){ // out-layer: the norm is chosen on the out-monolayer
-            mat hnorm_matrix = h * strans(dout);
-            double hnorm = hnorm_matrix(0,0);
-            // thickness elasticity
-            e = 0.5 * kt * pow(hnorm-h0,2.0) * (sqain+sqaout)/2.0;
-            // nodal force
-            for (int j = 0; j < 12; j++) {
-                rowvec h_xinj = -sf(j,0)*dout;
-                rowvec sqain_xinj = (sf(j,1)*a1in + sf(j,2)*a2in) * sqain;
-                fin.row(j) = 0.5*kt*( 2.0*(hnorm-h0)*(sqain+sqaout)/2.0*h_xinj + pow(hnorm-h0,2.0)*sqain_xinj/2.0 );
-            
-                mat dout_xoutj = -sf(j,1)*kron(strans(a1out),dout) -sf(j,2)*kron(strans(a2out),dout);
-                rowvec h_xoutj = sf(j,0)*dout + h*dout_xoutj;
-                rowvec sqaout_xj = (sf(j,1)*a1out + sf(j,2)*a2out) * sqaout;
-                fout.row(j) = 0.5*kt*( 2.0*(hnorm-h0)*(sqain+sqaout)/2.0*h_xoutj + pow(hnorm-h0,2.0)*sqaout_xj/2.0 );
+        // outlayer
+        rowvec xout(3); trans_time(sf.col(0),dotsout,xout);
+        rowvec a_1out(3); trans_time(sf.col(1),dotsout,a_1out);
+        rowvec a_2out(3); trans_time(sf.col(2),dotsout,a_2out);
+        rowvec a_11out(3); trans_time(sf.col(3),dotsout,a_11out);
+        rowvec a_22out(3); trans_time(sf.col(4),dotsout,a_22out);
+        rowvec a_12out(3); trans_time(sf.col(5),dotsout,a_12out);
+        rowvec a_21out(3); trans_time(sf.col(6),dotsout,a_21out);
+        rowvec xaout = cross(a_1out,a_2out);
+        double sqaout = norm(xaout,2);
+        rowvec xa_1out = cross(a_11out,a_2out) + cross(a_1out,a_21out);
+        rowvec xa_2out = cross(a_12out,a_2out) + cross(a_1out,a_22out);
+        mat oneelement1 = xaout * strans(xa_1out);
+        double sqa_1out = 1.0/sqaout * oneelement1(0,0);
+        mat oneelement2 = xaout * strans(xa_2out);
+        double sqa_2out = 1.0/sqaout * oneelement2(0,0);
+        rowvec a_3out = xaout/sqaout;
+        rowvec a_31out = 1.0/sqaout/sqaout *(xa_1out*sqaout-xaout*sqa_1out);
+        rowvec a_32out = 1.0/sqaout/sqaout *(xa_2out*sqaout-xaout*sqa_2out);
+        rowvec dout = a_3out;
+        rowvec d_1out = a_31out;
+        rowvec d_2out = a_32out;
+        rowvec a1out = cross(a_2out, a_3out)/sqaout;
+        rowvec a2out = cross(a_3out ,a_1out)/sqaout;
+        rowvec a11out = 1.0/sqaout/sqaout *( (cross(a_21out,a_3out)+cross(a_2out,a_31out))*sqaout - cross(a_2out,a_3out)*sqa_1out );
+        rowvec a12out = 1.0/sqaout/sqaout *( (cross(a_22out,a_3out)+cross(a_2out,a_32out))*sqaout - cross(a_2out,a_3out)*sqa_2out );
+        rowvec a21out = 1.0/sqaout/sqaout *( (cross(a_31out,a_1out)+cross(a_3out,a_11out))*sqaout - cross(a_3out,a_1out)*sqa_1out );
+        rowvec a22out = 1.0/sqaout/sqaout *( (cross(a_32out,a_1out)+cross(a_3out,a_12out))*sqaout - cross(a_3out,a_1out)*sqa_2out );
+        mat shu = a1out * strans(d_1out) + a2out * strans(d_2out);
+        double Hcurv = 0.5*shu(0,0); // mean curvature
+        // inlayer 
+        rowvec xin(3); trans_time(sf.col(0),dotsin,xin);
+        rowvec a_1in(3); trans_time(sf.col(1),dotsin,a_1in);
+        rowvec a_2in(3); trans_time(sf.col(2),dotsin,a_2in);
+        // height strain
+        rowvec h = xout - xin;
+        rowvec h_1 = a_1out - a_1in;
+        rowvec h_2 = a_2out - a_2in;
+        mat hnorm_matrix = h * strans(dout);
+        if ( whichLayer == 0 ) hnorm_matrix = -hnorm_matrix;
+        double hnorm = hnorm_matrix(0,0); // observed height
+        double rho = (hnorm-h0)/h0; // height elasticity or height strain 
+        mat rho_1_matrix = 1.0/h0 * ( h_1 * strans(dout) + h * strans(d_1out) ); double rho_1 = rho_1_matrix(0,0);
+        mat rho_2_matrix = 1.0/h0 * ( h_2 * strans(dout) + h * strans(d_2out) ); double rho_2 = rho_2_matrix(0,0);
+        if ( whichLayer == 0 ){
+            rho_1 = -rho_1;
+            rho_2 = -rho_2;
+        }
+        
+        // height energy (tilt energy)
+        double Eheight = 0.0; // energy; height elasticity
+        double eps = -1.0e-2; // criterion for E2
+        double A = kt/pow(eps,2.0)*(eps-1.0/3.0) - kt/pow(eps,3.0)*pow(eps-1.0/3.0,2.0) + 1.0/9.0*kt/pow(eps,3.0); // Two coefficient of E2 function
+        double B = - kt/eps*(eps-1.0/3.0) + 3.0/2.0*kt/pow(eps,2.0)*pow(eps-1.0/3.0,2.0) - 1.0/6.0*kt/pow(eps,2.0);
+        {
+            if ( rho <= eps ){ // E1 branch;
+                Eheight = ( 0.5 * kt * pow(rho - 1.0/3.0, 2.0) - kt/18.0 ) * sqaout; 
+            }else if ( rho > eps && rho <= 0.0 ){ // E2 branch; Aims to make the energy function and its derivation continuous. 
+                Eheight = ( A * pow(rho,3.0) + B * pow(rho, 2.0) ) * sqaout;
+            }else if ( rho > 0.0 ){ // E3 branch; expanded height
+                Eheight = ( 0.5 * ktpen * pow(rho, 2.0) )* sqaout;
             }
-        }else{                     // in-layer: the norm is chosen on the in-monolayer
-            mat hnorm_matrix = h * strans(din);
-            double hnorm = hnorm_matrix(0,0);
-            // thickness elasticity
-            e = 0.5 * kt * pow(hnorm-h0,2.0) * (sqain+sqaout)/2.0;
-            // nodal force
-            for (int j = 0; j < 12; j++) {
-                mat din_xinj = -sf(j,1)*kron(strans(a1in),din) -sf(j,2)*kron(strans(a2in),din);
-                rowvec h_xinj = -sf(j,0)*din + h*din_xinj;
-                rowvec sqain_xinj = (sf(j,1)*a1in + sf(j,2)*a2in) * sqain;
-                fin.row(j) = 0.5*kt*( 2.0*(hnorm-h0)*(sqain+sqaout)/2.0*h_xinj + pow(hnorm-h0,2.0)*sqain_xinj/2.0 );
-            
-                rowvec h_xoutj = sf(j,0)*din;
-                rowvec sqaout_xj = (sf(j,1)*a1out + sf(j,2)*a2out) * sqaout;
-                fout.row(j) = 0.5*kt*( 2.0*(hnorm-h0)*(sqain+sqaout)/2.0*h_xoutj + pow(hnorm-h0,2.0)*sqaout_xj/2.0 );
+        }
+        // divergence of tilt
+        double dTilt_drho = 0.0;
+        double deltaShu = sqrt(3.0*eps*eps - 2.0*eps);
+        double A1 = 0.5/eps/deltaShu *(3.0 - pow((3.0*eps-1.0)/deltaShu, 2.0));
+        double B1 = (3.0*eps-1.0)/deltaShu - A1*eps*eps;
+        if ( param.includeDivTilt == true ){        
+            if ( rho <= eps ){ // E1 branch;
+                dTilt_drho = (3.0*rho-1.0)/sqrt(3.0*rho*rho-2.0*rho); 
+            }else if ( rho > eps ){ // E2 branch; Aims to make the energy function and its derivation continuous. 
+                dTilt_drho = A1*rho*rho + B1; 
+            }
+        }
+        double divTilt = dTilt_drho * (rho_1 + rho_2);
+        // curvature energy
+        double Ebend = 0.5 * kc * pow(2.0*Hcurv + divTilt - c0, 2.0) * sqaout; 
+        // curvature-tilt energy
+        double EcurvTilt = 0.5 * kg * ( 2.0*Hcurv + divTilt ) * divTilt * sqaout;
+        
+        // area and volume elasticity. 
+        rowvec n1_cons = us*(S-S0)*a1out;
+        rowvec n2_cons = us*(S-S0)*a2out;
+        if ( param.isGlobalAreaConstraint == false ){
+            n1_cons = us*(sqaout-a0)*a1out;
+            n2_cons = us*(sqaout-a0)*a2out;
+        }
+        rowvec n1_conv(3); n1_conv.fill(0.0); 
+        rowvec n2_conv(3); n2_conv.fill(0.0); 
+        if ( param.isFlatMembrane == false ){
+            n1_conv = 1.0/3.0*uv*(V-V0)*(xout*strans(dout)*a1out-xout*strans(a1out)*dout);
+            n2_conv = 1.0/3.0*uv*(V-V0)*(xout*strans(dout)*a2out-xout*strans(a2out)*dout);
+        }
+        
+        fout.fill(0.0); fin.fill(0);
+        for (int j = 0; j < 12; j++) { // j is the vertex index in one-ring 
+            rowvec sqaout_j = sqaout * ( a1out*sf(j,1) + a2out*sf(j,2));
+            mat dout_j   = -sf(j,1)*kron(strans(a1out),dout) - sf(j,2)*kron(strans(a2out),dout);
+            mat d_1out_j = -sf(j,3)*kron(strans(a1out),dout) - sf(j,1)*kron(strans(a11out),dout) - sf(j,1)*kron(strans(a1out),d_1out) - sf(j,6)*kron(strans(a2out),dout) - sf(j,2)*kron(strans(a21out),dout) - sf(j,2)*kron(strans(a2out),d_1out);
+            mat d_2out_j = -sf(j,5)*kron(strans(a1out),dout) - sf(j,1)*kron(strans(a12out),dout) - sf(j,1)*kron(strans(a1out),d_2out) - sf(j,4)*kron(strans(a2out),dout) - sf(j,2)*kron(strans(a22out),dout) - sf(j,2)*kron(strans(a2out),d_2out);
+            rowvec Hcurv_j = -0.5*a1out*strans(a1out)*d_1out*sf(j,1) - 0.5*a1out*strans(a2out)*d_1out*sf(j,2) - 0.5*a2out*strans(a1out)*d_2out*sf(j,1) - 0.5*a2out*strans(a2out)*d_2out*sf(j,2) + 0.5*a1out*d_1out_j + 0.5*a2out*d_2out_j;
+            rowvec h_out_j = sf(j,0)*dout + (xout-xin)*dout_j;
+            rowvec h_in_j  = -sf(j,0)*dout;
+            rowvec rho_jout = 1.0/h0 * (sf(j,0)*dout + (xout-xin)*dout_j);
+            rowvec rho_jin  = 1.0/h0 * (-sf(j,0)*dout); 
+            if ( whichLayer == 0 ){
+                rho_jout = -rho_jout;
+                rho_jin  = -rho_jin;
+            }
+            // height force
+            // modify the nodal force if it is insertionPatch or expanded height
+            {
+                if ( rho <= eps ){ // E1 branch; 
+                    fout.row(j) = fout.row(j) + kt*(rho-1.0/3.0)*sqaout*rho_jout + (0.5*kt*pow(rho-1.0/3.0,2.0)-kt/18.0)*sqaout_j;    
+                    fin.row(j)  = fin.row(j)  + kt*(rho-1.0/3.0)*sqaout*rho_jin; 
+                }else if ( rho > eps && rho <= 0.0 ){ // E2 branch; 
+                    fout.row(j) = fout.row(j) + (3.0*A*pow(rho,2.0)+2.0*B*rho)*sqaout*rho_jout + (A*pow(rho,3.0)+B*pow(rho,2.0))*sqaout_j;
+                    fin.row(j)  = fin.row(j)  + (3.0*A*pow(rho,2.0)+2.0*B*rho)*sqaout*rho_jin;
+                }else if ( rho > 0.0 ){ // E3 branch; expanded height
+                    fout.row(j) = fout.row(j) + ktpen*rho*sqaout*rho_jout + 0.5*ktpen*pow(rho,2.0)*sqaout_j;    
+                    fin.row(j)  = fin.row(j)  + ktpen*rho*sqaout*rho_jin;
+                } 
+            }
+            // derivative of divTilt to rho
+            rowvec divTilt_jout(3); divTilt_jout.fill(0);
+            rowvec divTilt_jin(3);  divTilt_jin.fill(0);
+            if ( param.includeDivTilt == true ){
+                rowvec rho_1_jout = 1.0/h0 *( sf(j,1)*dout + h_1*dout_j + sf(j,0)*d_1out + h*d_1out_j );
+                rowvec rho_2_jout = 1.0/h0 *( sf(j,2)*dout + h_2*dout_j + sf(j,0)*d_2out + h*d_2out_j );
+                rowvec rho_1_jin  = 1.0/h0 *( -sf(j,1)*dout - sf(j,0)*d_1out );
+                rowvec rho_2_jin  = 1.0/h0 *( -sf(j,2)*dout - sf(j,0)*d_2out ); 
+                if ( whichLayer == 0 ){
+                    rho_1_jout = -rho_1_jout;
+                    rho_2_jout = -rho_2_jout;
+                    rho_1_jin  = -rho_1_jin;
+                    rho_2_jin  = -rho_2_jin;
+                }
+                double ddTilt_drho2 = 0.0;
+                if ( rho <= eps ){ // E1 branch;
+                    ddTilt_drho2 = 1.0/sqrt(3.0*rho*rho-2.0*rho) * ( 3.0 - pow(dTilt_drho,2.0) ); 
+                }else if ( rho > eps ){ // E2 branch; Aims to make the energy function and its derivation continuous. 
+                    ddTilt_drho2 = 2.0 * A1 * rho; 
+                }
+                divTilt_jout = ddTilt_drho2*rho_jout*(rho_1+rho_2) + dTilt_drho*(rho_1_jout+rho_2_jout);
+                divTilt_jin  = ddTilt_drho2*rho_jin*(rho_1+rho_2) + dTilt_drho*(rho_1_jin+rho_2_jin);
+            }          
+            // curvature force
+            fout.row(j) = fout.row(j) + kc*(2.0*Hcurv+divTilt-c0)*sqaout*(2.0*Hcurv_j+divTilt_jout) + 0.5*kc*pow(2.0*Hcurv+divTilt-c0,2.0)*sqaout_j;
+            fin.row(j)  = fin.row(j)  + kc*(2.0*Hcurv+divTilt-c0)*sqaout*( divTilt_jin );
+            // curvature-tilt force
+            if ( param.includeDivTilt == true ){
+                fout.row(j) = fout.row(j) + 0.5*kg*(2.0*Hcurv_j+divTilt_jout)*divTilt*sqaout + 0.5*kg*(2.0*Hcurv+divTilt)*divTilt_jout*sqaout + 0.5*kg*0.5*kg*(2.0*Hcurv+divTilt)*divTilt*sqaout_j;
+                fin.row(j)  = fin.row(j)  + 0.5*kg*( divTilt_jin )*divTilt*sqaout + 0.5*kg*(2.0*Hcurv+divTilt)*divTilt_jin*sqaout; 
+            }
+            // area and volume constraint
+            rowvec tempf_cons = n1_cons*sf(j,1) + n2_cons*sf(j,2);
+            fout.row(j) = fout.row(j) + tempf_cons * sqaout;
+            if ( param.isFlatMembrane == false ){
+                rowvec tempf_conv = n1_conv*sf(j,1) + n2_conv*sf(j,2) + 1.0/3.0*uv*(V-V0)*dout*sf(j,0);
+                fout.row(j) = fout.row(j) + tempf_conv*sqaout;
             }
         }
         /////////////////////////////////////////////////////////////
-        E = E + 1.0/2.0*gqcoeff(i)*e;
+        rowvec threeEnergy(3); threeEnergy << Ebend << Eheight << EcurvTilt << endr;
+        E = E + 1.0/2.0*gqcoeff(i)*threeEnergy;
         Fin = Fin + 1.0/2.0*gqcoeff(i)*fin;
-        Fout = Fout + 1.0/2.0*gqcoeff(i)*fout;
+        Fout = Fout + 1.0/2.0*gqcoeff(i)*fout;        
     }
 }
 
-void element_energy_force_thickness_irregularMinus(bool isInsertionPatch, bool isInnerLayer, mat ori_dotsin, mat ori_dotsout, Param param, double& E, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
+void element_energy_force_thickness_irregularMinus(bool isInsertionPatch, int whichLayer, mat ori_dotsin, mat ori_dotsout, Param param, rowvec& E, mat& cunchu1, mat& cunchu2, double C0_spont, double a0, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
     // cunchu1 is the inlayer force; cunchu2 is the outlayer force.
     // initialize the output parameters
-    E = 0.0;
+    E.fill(0.0);
     cunchu1.fill(0);
     cunchu2.fill(0);
     // five matrix used for subdivision of the irregular patch
@@ -650,8 +779,8 @@ void element_energy_force_thickness_irregularMinus(bool isInsertionPatch, bool i
         mat dotsin = M4*newnodes17in;    // element 4
         mat dotsout = M4*newnodes17out;
         mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-        double e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        rowvec e(3); e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m1m = strans(M4*matrix);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -659,8 +788,8 @@ void element_energy_force_thickness_irregularMinus(bool isInsertionPatch, bool i
 
         dotsin = M2*newnodes17in;    // element 2
         dotsout = M2*newnodes17out;
-        e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m2m = strans(M2*matrix);
         cunchu1 = cunchu1 + m2m*f1;
         cunchu2 = cunchu2 + m2m*f2;
@@ -668,8 +797,8 @@ void element_energy_force_thickness_irregularMinus(bool isInsertionPatch, bool i
 
         dotsin = M3*newnodes17in;    // element 3
         dotsout = M3*newnodes17out;
-        e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m3m = strans(M3*matrix);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -682,10 +811,10 @@ void element_energy_force_thickness_irregularMinus(bool isInsertionPatch, bool i
     }
 }
 
-void element_energy_force_thickness_irregularPlus(bool isInsertionPatch, bool isInnerLayer, mat ori_dotsin, mat ori_dotsout, Param param, double& E, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
+void element_energy_force_thickness_irregularPlus(bool isInsertionPatch, int whichLayer, mat ori_dotsin, mat ori_dotsout, Param param, rowvec& E, mat& cunchu1, mat& cunchu2, double C0_spont, double a0, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
     // cunchu1 is the inlayer force; cunchu2 is the outlayer force.
     // initialize the output parameters
-    E = 0.0;
+    E.fill(0.0);
     cunchu1.fill(0);
     cunchu2.fill(0);
     // five matrix used for subdivision of the complex patch
@@ -705,8 +834,8 @@ void element_energy_force_thickness_irregularPlus(bool isInsertionPatch, bool is
         mat dotsin = M1*newnodes19in;    // element 1
         mat dotsout = M1*newnodes19out;
         mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-        double e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        rowvec e(3); e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m1m = strans(M1*matrix);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -714,8 +843,8 @@ void element_energy_force_thickness_irregularPlus(bool isInsertionPatch, bool is
 
         dotsin = M2*newnodes19in;    // element 2
         dotsout = M2*newnodes19out;
-        e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m2m = strans(M2*matrix);
         cunchu1 = cunchu1 + m2m*f1;
         cunchu2 = cunchu2 + m2m*f2;
@@ -723,8 +852,8 @@ void element_energy_force_thickness_irregularPlus(bool isInsertionPatch, bool is
 
         dotsin = M3*newnodes19in;    // element 3
         dotsout = M3*newnodes19out;
-        e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m3m = strans(M3*matrix);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -737,10 +866,10 @@ void element_energy_force_thickness_irregularPlus(bool isInsertionPatch, bool is
     }
 }
 
-void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool isInnerLayer, mat ori_dotsin, mat ori_dotsout, Param param, double& E, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
+void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, int whichLayer, mat ori_dotsin, mat ori_dotsout, Param param, rowvec& E, mat& cunchu1, mat& cunchu2, double C0_spont, double a0, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
     // cunchu1 is the inlayer force; cunchu2 is the outlayer force.
     // initialize the output parameters
-    E = 0.0;
+    E.fill(0.0);
     cunchu1.fill(0);
     cunchu2.fill(0);
     // five matrix used for subdivision of the sudoregular patch 1
@@ -761,8 +890,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
         mat dotsin = M2f*newnodes18in;    // element 2
         mat dotsout = M2f*newnodes18out;
         mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-        double e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        rowvec e(3); e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m1m = strans(M2f*Mf);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -770,8 +899,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
 
         dotsin = M3f*newnodes18in;    // element 3
         dotsout = M3f*newnodes18out;
-        e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m3m = strans(M3f*Mf);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -793,8 +922,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
             mat dotsin = M4i*newnodes17in;    // element 4
             mat dotsout = M4i*newnodes17out;
             mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-            double e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            rowvec e(3); e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m4m = strans(M4i*matrix);
             cunchu1 = cunchu1 + m4m*f1;
             cunchu2 = cunchu2 + m4m*f2;
@@ -802,8 +931,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
 
             dotsin = M2i*newnodes17in;    // element 2
             dotsout = M2i*newnodes17out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m2m = strans(M2i*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -811,8 +940,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
 
             dotsin = M3i*newnodes17in;    // element 3
             dotsout = M3i*newnodes17out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m3m = strans(M3i*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -840,8 +969,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
             mat dotsin = M1c*newnodes19in;    // element 1
             mat dotsout = M1c*newnodes19out;
             mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-            double e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            rowvec e(3); e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m1m = strans(M1c*matrix);
             cunchu1 = cunchu1 + m1m*f1;
             cunchu2 = cunchu2 + m1m*f2;
@@ -849,8 +978,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
 
             dotsin = M2c*newnodes19in;    // element 2
             dotsout = M2c*newnodes19out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m2m = strans(M2c*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -858,8 +987,8 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
 
             dotsin = M3c*newnodes19in;    // element 3
             dotsout = M3c*newnodes19out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m3m = strans(M3c*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -873,10 +1002,10 @@ void element_energy_force_thickness_pseudoRegular1(bool isInsertionPatch, bool i
     }
 }
 
-void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool isInnerLayer, mat ori_dotsin, mat ori_dotsout, Param param, double& E, mat& cunchu1, mat& cunchu2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
+void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, int whichLayer, mat ori_dotsin, mat ori_dotsout, Param param, rowvec& E, mat& cunchu1, mat& cunchu2, double C0_spont, double a0, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix) {
     // cunchu1 is the inlayer force; cunchu2 is the outlayer force.
     // initialize the output parameters
-    E = 0.0;
+    E.fill(0.0);
     cunchu1.fill(0);
     cunchu2.fill(0);
 
@@ -898,8 +1027,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
         mat dotsin = M2f*newnodes18in;    // element 2
         mat dotsout = M2f*newnodes18out;
         mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-        double e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        rowvec e(3); e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m1m = strans(M2f*Mf);
         cunchu1 = cunchu1 + m1m*f1;
         cunchu2 = cunchu2 + m1m*f2;
@@ -907,8 +1036,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
 
         dotsin = M3f*newnodes18in;    // element 3
         dotsout = M3f*newnodes18out;
-        e = 0.0;
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+        e.fill(0.0);
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
         mat m3m = strans(M3f*Mf);
         cunchu1 = cunchu1 + m3m*f1;
         cunchu2 = cunchu2 + m3m*f2;
@@ -931,8 +1060,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
             mat dotsin = M4i*newnodes17in;    // element 4
             mat dotsout = M4i*newnodes17out;
             mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-            double e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            rowvec e(3); e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m4m = strans(M4i*matrix);
             cunchu1 = cunchu1 + m4m*f1;
             cunchu2 = cunchu2 + m4m*f2;
@@ -940,8 +1069,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
 
             dotsin = M2i*newnodes17in;    // element 2
             dotsout = M2i*newnodes17out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m2m = strans(M2i*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -949,8 +1078,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
 
             dotsin = M3i*newnodes17in;    // element 3
             dotsout = M3i*newnodes17out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m3m = strans(M3i*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -978,8 +1107,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
             mat dotsin = M1c*newnodes19in;    // element 1
             mat dotsout = M1c*newnodes19out;
             mat f1(12,3);  f1.fill(0); mat f2 = f1; 
-            double e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            rowvec e(3); e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m1m = strans(M1c*matrix);
             cunchu1 = cunchu1 + m1m*f1;
             cunchu2 = cunchu2 + m1m*f2;
@@ -987,8 +1116,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
 
             dotsin = M2c*newnodes19in;    // element 2
             dotsout = M2c*newnodes19out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m2m = strans(M2c*matrix);
             cunchu1 = cunchu1 + m2m*f1;
             cunchu2 = cunchu2 + m2m*f2;
@@ -996,8 +1125,8 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
 
             dotsin = M3c*newnodes19in;    // element 3
             dotsout = M3c*newnodes19out;
-            e = 0.0;
-            element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dotsin, dotsout, param, e, f1, f2, gqcoeff, shape_functions);
+            e.fill(0.0);
+            element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dotsin, dotsout, param, e, f1, f2, C0_spont, a0, gqcoeff, shape_functions);
             mat m3m = strans(M3c*matrix);
             cunchu1 = cunchu1 + m3m*f1;
             cunchu2 = cunchu2 + m3m*f2;
@@ -1012,9 +1141,9 @@ void element_energy_force_thickness_pseudoRegular2(bool isInsertionPatch, bool i
 }
 
 // to sum up
-// for out-layer: vertex1 is the mid-surface, vertex2 is the out-surface
-// for in-layer: vertex1 is the in-surface, vertex2 is the mid-surface
-void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Row<int> one_ring_nodes, Param param, double& Ethick, mat& fthick, mat vertex1, mat vertex2, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix){
+// for out-layer,2: vertex1 is the mid-surface, vertex2 is the out-surface
+// for in-layer,0: vertex1 is the mid-surface, vertex2 is the in-surface
+void element_energy_force_thickness(bool isInsertionPatch, int whichLayer, Row<int> one_ring_nodes, Param param, rowvec& Ethick, mat& fthick, mat vertex1, mat vertex2, double C0_spont, double a0, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix){
     int numvertex = vertex1.n_rows;
     // regular patch
     if ( one_ring_nodes(12) == -1 ) { 
@@ -1028,9 +1157,9 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
             int nodenum = one_ring_nodes(j);
             dots2.row(j) = vertex2.row(nodenum);
         }
-        double ethick = 0.0; mat fH1(12,3); mat fH2(12,3); 
-        element_energy_force_thickness_regular(isInsertionPatch, isInnerLayer, dots1, dots2, param, ethick, fH1, fH2, gqcoeff, shape_functions);
-        if ( isInnerLayer == false ){
+        rowvec ethick(3); mat fH1(12,3); mat fH2(12,3); 
+        element_energy_force_thickness_regular(isInsertionPatch, whichLayer, dots1, dots2, param, ethick, fH1, fH2, C0_spont, a0, gqcoeff, shape_functions);
+        if ( whichLayer == 2 ){
             for (int j = 0; j < 12; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
@@ -1039,14 +1168,14 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + 2 * numvertex) = fthick.row(nodenum + 2 * numvertex) + fH2.row(j);
             } 
-        }else{
+        }else if ( whichLayer == 0 ){
             for (int j = 0; j < 12; j++) { // in-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum) = fthick.row(nodenum) + fH1.row(j);
+                fthick.row(nodenum) = fthick.row(nodenum) + fH2.row(j);
             } 
             for (int j = 0; j < 12; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH2.row(j);
+                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
             } 
         }
         Ethick = ethick;
@@ -1063,9 +1192,9 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
             int nodenum = one_ring_nodes(j);
             dots2.row(j) = vertex2.row(nodenum);
         }
-        double ethick = 0.0; mat fH1(11,3); mat fH2(11,3); 
-        element_energy_force_thickness_irregularMinus(isInsertionPatch, isInnerLayer, dots1, dots2, param, ethick, fH1, fH2, gqcoeff, shape_functions, subMatrix);
-        if ( isInnerLayer == false ){
+        rowvec ethick(3); mat fH1(11,3); mat fH2(11,3); 
+        element_energy_force_thickness_irregularMinus(isInsertionPatch, whichLayer, dots1, dots2, param, ethick, fH1, fH2, C0_spont, a0, gqcoeff, shape_functions, subMatrix);
+        if ( whichLayer == 2 ){
             for (int j = 0; j < 11; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
@@ -1074,14 +1203,14 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + 2 * numvertex) = fthick.row(nodenum + 2 * numvertex) + fH2.row(j);
             } 
-        }else{
+        }else if ( whichLayer == 0 ){
              for (int j = 0; j < 11; j++) { // in-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum) = fthick.row(nodenum) + fH1.row(j);
+                fthick.row(nodenum) = fthick.row(nodenum) + fH2.row(j);
             } 
             for (int j = 0; j < 11; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH2.row(j);
+                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
             } 
         }
         Ethick = ethick;
@@ -1098,9 +1227,9 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
             int nodenum = one_ring_nodes(j);
             dots2.row(j) = vertex2.row(nodenum);
         }
-        double ethick = 0.0; mat fH1(13,3); mat fH2(13,3); 
-        element_energy_force_thickness_irregularPlus(isInsertionPatch, isInnerLayer, dots1, dots2, param, ethick, fH1, fH2, gqcoeff, shape_functions, subMatrix);
-        if ( isInnerLayer == false ){
+        rowvec ethick(3); mat fH1(13,3); mat fH2(13,3); 
+        element_energy_force_thickness_irregularPlus(isInsertionPatch, whichLayer, dots1, dots2, param, ethick, fH1, fH2, C0_spont, a0, gqcoeff, shape_functions, subMatrix);
+        if ( whichLayer == 2 ){
             for (int j = 0; j < 13; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
@@ -1109,14 +1238,14 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + 2 * numvertex) = fthick.row(nodenum + 2 * numvertex) + fH2.row(j);
             } 
-        }else{
+        }else if ( whichLayer == 0 ){
              for (int j = 0; j < 13; j++) { // in-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum) = fthick.row(nodenum) + fH1.row(j);
+                fthick.row(nodenum) = fthick.row(nodenum) + fH2.row(j);
             } 
             for (int j = 0; j < 13; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH2.row(j);
+                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
             } 
         }
         Ethick = ethick;
@@ -1133,9 +1262,9 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
             int nodenum = one_ring_nodes(j);
             dots2.row(j) = vertex2.row(nodenum);
         }
-        double ethick = 0.0; mat fH1(12,3); mat fH2(12,3); 
-        element_energy_force_thickness_pseudoRegular1(isInsertionPatch, isInnerLayer, dots1, dots2, param, ethick, fH1, fH2, gqcoeff, shape_functions, subMatrix);
-        if ( isInnerLayer == false ){
+        rowvec ethick(3); mat fH1(12,3); mat fH2(12,3); 
+        element_energy_force_thickness_pseudoRegular1(isInsertionPatch, whichLayer, dots1, dots2, param, ethick, fH1, fH2, C0_spont, a0, gqcoeff, shape_functions, subMatrix);
+        if ( whichLayer == 2 ){
             for (int j = 0; j < 12; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
@@ -1144,14 +1273,14 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + 2 * numvertex) = fthick.row(nodenum + 2 * numvertex) + fH2.row(j);
             } 
-        }else{
+        }else if ( whichLayer == 0 ){
              for (int j = 0; j < 12; j++) { // in-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum) = fthick.row(nodenum) + fH1.row(j);
+                fthick.row(nodenum) = fthick.row(nodenum) + fH2.row(j);
             } 
             for (int j = 0; j < 12; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH2.row(j);
+                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
             } 
         } 
         Ethick = ethick;
@@ -1168,9 +1297,9 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
             int nodenum = one_ring_nodes(j);
             dots2.row(j) = vertex2.row(nodenum);
         }
-        double ethick = 0.0; mat fH1(12,3); mat fH2(12,3); 
-        element_energy_force_thickness_pseudoRegular2(isInsertionPatch, isInnerLayer, dots1, dots2, param, ethick, fH1, fH2, gqcoeff, shape_functions, subMatrix);
-                if ( isInnerLayer == false ){
+        rowvec ethick(3); mat fH1(12,3); mat fH2(12,3); 
+        element_energy_force_thickness_pseudoRegular2(isInsertionPatch, whichLayer, dots1, dots2, param, ethick, fH1, fH2, C0_spont, a0,  gqcoeff, shape_functions, subMatrix);
+        if ( whichLayer == 2 ){
             for (int j = 0; j < 12; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
@@ -1179,14 +1308,14 @@ void element_energy_force_thickness(bool isInsertionPatch, bool isInnerLayer, Ro
                 int nodenum = one_ring_nodes(j);
                 fthick.row(nodenum + 2 * numvertex) = fthick.row(nodenum + 2 * numvertex) + fH2.row(j);
             } 
-        }else{
+        }else if ( whichLayer == 0 ){
              for (int j = 0; j < 12; j++) { // in-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum) = fthick.row(nodenum) + fH1.row(j);
+                fthick.row(nodenum) = fthick.row(nodenum) + fH2.row(j);
             } 
             for (int j = 0; j < 12; j++) { // mid-layer of mesh
                 int nodenum = one_ring_nodes(j);
-                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH2.row(j);
+                fthick.row(nodenum + numvertex) = fthick.row(nodenum + numvertex) + fH1.row(j);
             } 
         }  
         Ethick = ethick;
@@ -1616,7 +1745,7 @@ void element_energy_force_tilt_regular_fakeregular(bool isInnerLayer, mat ori_do
 //////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////
 // rgularization energy and forces
-void energy_force_regularization(bool isInnerLayer, mat vertex, mat vertexold, Mat<int> face, Param param, Row<int> isinsertionpatch, double& E_regularization, mat& Fre, rowvec& deformnumbers){
+void energy_force_regularization(mat vertex, mat vertexold, Mat<int> face, Param& param, double& E_regularization, mat& Fre, rowvec& deformnumbers){
     double k  = param.k_regularization;
     //Fre.fill(0.0);
     E_regularization = 0.0;
@@ -1628,9 +1757,7 @@ void energy_force_regularization(bool isInnerLayer, mat vertex, mat vertexold, M
     mat fre(vertex.n_rows,3); fre.fill(0.0);
     #pragma omp parallel for reduction(+:fre)
     for (int i = 0; i < face.n_rows; i++){    
-        bool isInsertionPatch = false;
-        if ( isinsertionpatch(i) == 1 && isInnerLayer == false){
-            isInsertionPatch = true; 
+        if ( param.isInsertionPatch.outlayer[i] == true ){
             continue;
         }
         int node0 = face(i,0); // three nodes of this face element
@@ -1648,26 +1775,21 @@ void energy_force_regularization(bool isInnerLayer, mat vertex, mat vertexold, M
         rowvec vectorold2 = vertexold.row(node2) - vertexold.row(node0);  double sideold2 = norm(vectorold2,2.0);
         s = (sideold0 + sideold1 + sideold2)/2.0;
         double areaold = sqrt( s*(s-sideold0)*(s-sideold1)*(s-sideold2) ); //double areaold = S0/face.n_rows;
+        double a0 = areaold;  
             
         bool isDeformShape = false;
-        if ( gama > param.gama_shape && param.usingRpi == true ){
-            isDeformShape = true;
-        }
         bool isDeformArea = false;
-        double a0 = areaold; 
-        if ( abs(area-a0)/a0 >= param.gama_area && param.usingRpi == true ){
-            isDeformArea = true;
+
+        if ( param.usingRpi == true ){
+            if ( gama > param.gama_shape && param.isLocallyFinerFaceMostEdge[i] == false ){
+                isDeformShape = true;
+            }
+            if ( abs(area-a0)/a0 >= param.gama_area  && param.isLocallyFinerFaceMostEdge[i] == false ){
+                //isDeformArea = true;
+            }
         }
-        
-        if ( param.duringStepsToIncreaseInsertDepth == true ){
-            deformnumber_shape ++;
-            double ktmp = 0.0; // k / 10.0; 
-            double meansideold = sqrt( 4.0*area/sqrt(3.0) );
-            Ere(i) = ktmp /2.0*(pow(side0-meansideold,2.0) + pow(side1-meansideold,2.0) + pow(side2-meansideold,2.0));
-            fre.row(node0) = fre.row(node0) + ktmp*( (side0-meansideold)*(-vector0/side0) + (side2-meansideold)*(vector2/side2) );
-            fre.row(node1) = fre.row(node1) + ktmp*( (side1-meansideold)*(-vector1/side1) + (side0-meansideold)*(vector0/side0) );
-            fre.row(node2) = fre.row(node2) + ktmp*( (side2-meansideold)*(-vector2/side2) + (side1-meansideold)*(vector1/side1) );
-        }else if ( isDeformShape == false && isDeformArea == false ){
+
+        if ( isDeformShape == false && isDeformArea == false ){
             Ere(i) = k/2.0*(pow(side0-sideold0,2.0) + pow(side1-sideold1,2.0) + pow(side2-sideold2,2.0));
             fre.row(node0) = fre.row(node0) + k*( (side0-sideold0)*(-vector0/side0) + (side2-sideold2)*(vector2/side2) );
             fre.row(node1) = fre.row(node1) + k*( (side1-sideold1)*(-vector1/side1) + (side0-sideold0)*(vector0/side0) );
@@ -1700,7 +1822,7 @@ void energy_force_regularization(bool isInnerLayer, mat vertex, mat vertexold, M
 ///////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // here, A is the one-ring-nodes
-void plane_area(mat vertex, Mat<int> face, Mat<int> isBoundaryFace, Mat<int> A, Row<int> Isinsertionpatch, int GaussQuadratureN, rowvec& element_area, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, int n){ // A is face_ring_vertex 
+void cell_area_volume(Mat<int> face, mat vertex, Mat<int> isBoundaryFace, Mat<int> A, int GaussQuadratureN, rowvec& element_area, rowvec& element_volume, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, int n){ // A is face_ring_vertex 
     element_area.fill(0);
     mat VWU = setVMU(GaussQuadratureN); 
 
@@ -1970,13 +2092,13 @@ rowvec get_insertionpatchArea(Mat<int> insertionpatch, rowvec elementSout){
 ///////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // here, A is the one-ring-nodes
-double LocalAreaConstraintEnergy(bool isInnerLayer, mat vertex, Mat<int> face, Mat<int> A, Param param, Row<int> Isinsertionpatch, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, rowvec elementsqa){ // A is face_ring_vertex 
+double LocalAreaConstraintEnergy(int whichLayer, mat vertex, Mat<int> face, Mat<int> A, Param param, vector<bool> Isinsertionpatch, rowvec gqcoeff, cube shape_functions, SubMatrix subMatrix, rowvec elementsqa){ // A is face_ring_vertex 
     double energy = 0.0;
     int GaussQuadratureN = param.GaussQuadratureN;
     mat VWU = setVMU(GaussQuadratureN); 
 
     double us = param.us_in;
-    if ( isInnerLayer == false ) us = param.us_out;
+    if ( whichLayer == 2 ) us = param.us_out; // 0 means inLayer, 2 means outLayer
 
     int n = param.subDivideTimes;
     #pragma omp parallel for reduction(+:energy)
@@ -2250,10 +2372,10 @@ double LocalAreaConstraintEnergy(bool isInnerLayer, mat vertex, Mat<int> face, M
 ///////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-rowvec determine_spontaneous_curvature(bool isInnerLayer, Param param, Mat<int> face, mat vertex){
+rowvec determine_spontaneous_curvature(int whichLayer, Param param, Mat<int> face, mat vertex){
     rowvec spontcurv(face.n_rows); 
     Mat<int> insertionpatch = param.insertionpatch;
-    if (isInnerLayer == false){
+    if (whichLayer == 2){ // outlayer
         double c0ins = param.c0out_ins;
         double c0 = param.c0out;
         spontcurv.fill(c0);
@@ -2341,20 +2463,22 @@ void insertion_shape_constraint(Param param, Mat<int> faceout, mat vertexout, do
         }
         // add the constraint on the adjacent patches around the insertionpatch
         k = param.K_adjacentPatch;
-        for (int i = 0; i < faceout.n_rows; i++){
-            if (param.IsinertionpatchAdjacent(i) != 1) continue;
-            int facetmp = i;
-            int node0 = faceout(facetmp,0); // three nodes of this face element
-            int node1 = faceout(facetmp,1);
-            int node2 = faceout(facetmp,2);
-            rowvec vector0 = vertexout.row(node0) - vertexout.row(node1);  double side0 = norm(vector0,2.0);
-            rowvec vector1 = vertexout.row(node1) - vertexout.row(node2);  double side1 = norm(vector1,2.0);
-            rowvec vector2 = vertexout.row(node2) - vertexout.row(node0);  double side2 = norm(vector2,2.0);
-            double meanside = param.insertionShapeEdgeLength;
-            Einsert = Einsert + k/2.0*(pow(side0-meanside,2.0) + pow(side1-meanside,2.0) + pow(side2-meanside,2.0));
-            finsert.row(node0) = finsert.row(node0) + k*( (side0-meanside)*(-vector0/side0) + (side2-meanside)*(vector2/side2) );
-            finsert.row(node1) = finsert.row(node1) + k*( (side1-meanside)*(-vector1/side1) + (side0-meanside)*(vector0/side0) );
-            finsert.row(node2) = finsert.row(node2) + k*( (side2-meanside)*(-vector2/side2) + (side1-meanside)*(vector1/side1) );
+        if ( k > 0.0 ){
+            for (int i = 0; i < faceout.n_rows; i++){
+                if (param.IsinertionpatchAdjacent(i) != 1) continue;
+                int facetmp = i;
+                int node0 = faceout(facetmp,0); // three nodes of this face element
+                int node1 = faceout(facetmp,1);
+                int node2 = faceout(facetmp,2);
+                rowvec vector0 = vertexout.row(node0) - vertexout.row(node1);  double side0 = norm(vector0,2.0);
+                rowvec vector1 = vertexout.row(node1) - vertexout.row(node2);  double side1 = norm(vector1,2.0);
+                rowvec vector2 = vertexout.row(node2) - vertexout.row(node0);  double side2 = norm(vector2,2.0);
+                double meanside = param.insertionShapeEdgeLength;
+                Einsert = Einsert + k/2.0*(pow(side0-meanside,2.0) + pow(side1-meanside,2.0) + pow(side2-meanside,2.0));
+                finsert.row(node0) = finsert.row(node0) + k*( (side0-meanside)*(-vector0/side0) + (side2-meanside)*(vector2/side2) );
+                finsert.row(node1) = finsert.row(node1) + k*( (side1-meanside)*(-vector1/side1) + (side0-meanside)*(vector0/side0) );
+                finsert.row(node2) = finsert.row(node2) + k*( (side2-meanside)*(-vector2/side2) + (side1-meanside)*(vector1/side1) );
+            }
         }
 
         finsert = -finsert;
@@ -2364,9 +2488,13 @@ void insertion_shape_constraint(Param param, Mat<int> faceout, mat vertexout, do
 ///////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // calculate the thickness
-rowvec calculate_thickness(bool IsinnerLayer, Mat<int> face, mat vertexin, mat vertexout, Mat<int> one_ring_nodes, Param param, cube shape_functions, SubMatrix subMatrix){ // A is face_ring_vertex 
-    
-    rowvec thickness(face.n_rows); thickness.fill(-1.0);
+mat calculate_thickness(int whichLayer, Mat<int> face, mat vertexin, mat vertexout, Mat<int> one_ring_nodes, Param param, cube shape_functions, SubMatrix subMatrix){ // A is face_ring_vertex     
+    double h0 = param.thickness_out;
+    if ( whichLayer == 0 ){ // in-layer
+        h0 = param.thickness_in;
+    }
+
+    mat thickness(face.n_rows,2); thickness.fill(-1.0);
 
     int GaussQuadratureN = param.GaussQuadratureN;
     //mat VWU = setVMU(GaussQuadratureN); 
@@ -2456,13 +2584,25 @@ rowvec calculate_thickness(bool IsinnerLayer, Mat<int> face, mat vertexin, mat v
         rowvec xout = x;
         rowvec h = xout - xin; 
         mat hnorm_matrix(1,1); 
-        if ( IsinnerLayer == false ){
+        if ( whichLayer == 2 ){
             hnorm_matrix = h * strans(dout);
-        }else{
+        }else if (whichLayer == 0){
             hnorm_matrix = h * strans(din);
         }
         
-        thickness(i) = hnorm_matrix(0,0);
+       double hnorm = hnorm_matrix(0,0); // observed height
+
+        //mat shu = aout1*strans(dout_1) + aout2*strans(dout_2);
+        //double H_curv_out = 0.5*shu(0,0); // mean curvature
+        
+        double h0_curv = h0; //h0 * (1.0 + h0*(1.0*H_curv_out)); // curvature-modified height. NOTE: it is NOT h0*(1.0-h0*(2.0*H_curv_out))    
+        
+        if (param.isInsertionPatch.outlayer[i] == true && whichLayer == 2){
+            h0_curv = h0 - param.insert_dH0;
+        }
+
+        thickness(i,0) = h0_curv;
+        thickness(i,1) = hnorm;
     }
 
     return thickness;

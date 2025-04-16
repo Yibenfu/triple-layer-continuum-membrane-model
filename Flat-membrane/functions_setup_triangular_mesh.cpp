@@ -10,8 +10,51 @@
 using namespace std;
 using namespace arma;
 
+struct Vertex3Layers{
+    mat inlayer;
+    mat midlayer;
+    mat outlayer;
+};
+struct Force3Layers{
+    mat inlayer;
+    mat midlayer;
+    mat outlayer;
+};
+
+/*
+struct Face3Layers{
+    Mat<int> inlayer;
+    Mat<int> midlayer;
+    Mat<int> outlayer;
+};
+*/
+
+struct SpontCurv3Layers{
+    rowvec inlayer;
+    rowvec outlayer;
+};
+
+struct IsInsertionpatch3Layers{
+    vector<bool> inlayer;
+    vector<bool> outlayer;
+};
+
+struct ElementS03Layers{
+    rowvec inlayer;
+    rowvec midlayer;
+    rowvec outlayer;
+};
+struct ElementV03Layers{
+    rowvec inlayer;
+    rowvec midlayer;
+    rowvec outlayer;
+};
+
 struct Param{
+    int currentStep;
+    bool includeDivTilt = false;
     // mesh parameters:
+    bool   isFlatMembrane = true;
     double l;                                       // triangular side length, nm
     double sideX;                                   // rectangle sidelength x, nm
     double sideY;                                   // rectangle sidelength y, nm
@@ -33,6 +76,7 @@ struct Param{
     double k_regularization;                         // coefficient of the regulerization constraint, 
     double gama_shape = 0.2;                         // factor of shape deformation
     double gama_area = 0.2;                          // factor of size deformation
+    bool   deformAreaOrShape = false;
     int    subDivideTimes = 5;                       // subdivision times for the irregular patches
     int    GaussQuadratureN = 2;                     // Gaussian quadrature integral 
 
@@ -41,25 +85,39 @@ struct Param{
     bool   isGlobalAreaConstraint = true;            // whether to use Global constraints for the area elasticity
     // out-layer (top layer)
     double kc_out  = 20.0*4.17/2.0;                  // pN.nm. bending modulus, out-monolayer 
+    double kst_out  = 0.0;                           // pN.nm. splay-tilt modulus, out-layer
     double us_out  = 250.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
     double Ktilt_out  = 90.0;                        // pN/nm = mN/m. tilt modulus
-    double Kthick_out = Ktilt_out + 2.0*us_out;      // pN/nm, coefficient of the membrane thickness. penalty term
+    double Kthick_out = 3.0*Ktilt_out;      // pN/nm, coefficient of the membrane thickness. penalty term
     double thickness_out = 4.0/2.0;                  // nm, out-monolayer thickness. 
     double c0out = 0.0;                              // spontaneous curvature of membrane, out-layer. Convex is positive
     double S0out;                                    //target area
     double Sout;                                     // area, total area 
+    double H0C_out;                                  // curvature-modified height; target height
+    double V0out;                                    // target volume of the sphere
+    double Vout;                                     // volume of the sphere      
+
+
     // in-layer (bottom layer)
     double kc_in  = kc_out;                          // pN.nm. bending modulus, in-monolayer 
+    double kst_in  = 0.0;                            // pN.nm. splay-tilt modulus, in-layer
     double us_in  = us_out;                          // pN/nm, area stretching modulus, in-monolayer; 0.5*us*(ds)^2/s0;
     double Ktilt_in  = Ktilt_out;                    // pN/nm = mN/m. tilt modulus
-    double Kthick_in = Ktilt_in + 2.0*us_in;
+    double Kthick_in = 3.0*Ktilt_in;
     double thickness_in = thickness_out;             // nm, in-monolayer thickness. 
     double c0in  = c0out;                            // spontaneous curvature of membrane, in-layer. Concave is positive
     double S0in;                                     //target area
     double Sin;                                      // area, total area 
+    double H0C_in;                                  // curvature-modified height; target height
+    double V0in;                                     // target volume of the sphere
+    double Vin;                                      // volume of the sphere      
+    double uv;                                       // coefficeint of the volume constraint, 0.5*uv*(dv)^2/v0;
+    
+    double Kthick_constraint;
 
     // insertion parameters:
     Mat<int> insertionpatch;
+    IsInsertionpatch3Layers isInsertionPatch;
     double c0out_ins = 0.3;                          // spontaneous curvature of insertion, outer layer
     double c0in_ins = 0.3;
     double s_insert  = 2.0;                          // insertion area
@@ -68,9 +126,12 @@ struct Param{
     double insertionShapeEdgeLength; 
     Row<int> IsinertionpatchAdjacent;
     double K_adjacentPatch = 0.0;                    // constant for the shape constraint on the patches adjacent around insertion 
+    double Kthick_insertion;
 
     // system setup
     bool   duringStepsToIncreaseInsertDepth = false;
+    vector<bool> isLocallyFinerFace;
+    vector<bool> isLocallyFinerFaceMostEdge;
 }; 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1352,24 +1413,34 @@ void trans_time(mat a, mat b, mat& out){
     //return out;
 }
 
-vec force_scale(mat forcein, mat forcemid, mat forceout){
-    int numin = forcein.n_rows;
-    int nummid = forcemid.n_rows;
-    int numout = forceout.n_rows;
-    vec out(numin+nummid+numout);
-    #pragma omp parallel for
-    for (int i = 0; i < numin; i++){
-        out(i) = norm(forcein.row(i),2);
+vec force3_scale(Force3Layers force3, bool isBilayerModel){
+    if ( isBilayerModel == false ){
+        int numout = force3.outlayer.n_rows;
+        vec out(numout);
+        #pragma omp parallel for
+        for (int i = 0; i < numout; i++){
+            out(i) = norm(force3.outlayer.row(i),2);
+        }
+        return out;
+    }else{
+        int numin = force3.inlayer.n_rows;
+        int nummid = force3.midlayer.n_rows;
+        int numout = force3.outlayer.n_rows;
+        vec out(numin + nummid + numout);
+        #pragma omp parallel for
+        for (int i = 0; i < numin; i++){
+            out(i) = norm(force3.inlayer.row(i),2);
+        }
+        #pragma omp parallel for
+        for (int i = numin; i < numin+nummid; i++){
+            out(i) = norm(force3.midlayer.row(i-numin),2);
+        }
+        #pragma omp parallel for
+        for (int i = numin+nummid; i < numin+nummid+numout; i++){
+            out(i) = norm(force3.outlayer.row(i-numin-nummid),2);
+        }
+        return out;
     }
-    #pragma omp parallel for
-    for (int i = numin; i < numin+nummid; i++){
-        out(i) = norm(forcemid.row(i-numin),2);
-    }
-    #pragma omp parallel for
-    for (int i = numin+nummid; i < numin+nummid+numout; i++){
-        out(i) = norm(forceout.row(i-numin-nummid),2);
-    }
-    return out;
 }
 
 vec toscale(mat forcein){
@@ -1394,6 +1465,41 @@ rowvec tovector(mat vertex){
     return vertex_row;
 }
 
+rowvec changeForce3ToVector(Force3Layers force3, bool isBilayerModel){
+    int nodenum = force3.outlayer.n_rows;
+    if ( isBilayerModel == false ){
+        rowvec out(3*nodenum);
+        #pragma omp parallel for
+        for (int i = 0; i < nodenum; i++){
+            out(3*i+0) = force3.outlayer(i,0);
+            out(3*i+1) = force3.outlayer(i,1);
+            out(3*i+2) = force3.outlayer(i,2);
+        }
+        return out;
+    }else{
+        rowvec out(3*nodenum * 3);
+        #pragma omp parallel for
+        for (int i = 0; i < nodenum; i++){
+            out(3*i+0) = force3.inlayer(i,0);
+            out(3*i+1) = force3.inlayer(i,1);
+            out(3*i+2) = force3.inlayer(i,2);
+        }
+        #pragma omp parallel for
+        for (int i = nodenum; i < nodenum*2; i++){
+            out(3*i+0) = force3.midlayer(i-nodenum,0);
+            out(3*i+1) = force3.midlayer(i-nodenum,1);
+            out(3*i+2) = force3.midlayer(i-nodenum,2);
+        }
+        #pragma omp parallel for
+        for (int i = nodenum*2; i < nodenum*3; i++){
+            out(3*i+0) = force3.outlayer(i-nodenum*2,0);
+            out(3*i+1) = force3.outlayer(i-nodenum*2,1);
+            out(3*i+2) = force3.outlayer(i-nodenum*2,2);
+        }
+        return out;
+    }
+}
+
 mat tomatrix(rowvec vertex_row){
     int nodenum = vertex_row.n_cols/3;
     mat vertex(nodenum,3);
@@ -1411,6 +1517,10 @@ mat tomatrix(rowvec vertex_row){
 // the following are about updates of boundary vertices, including their nodal forces and positions.
 
 mat manage_ghost_force(mat force, Mat<int> face, Param param){
+    mat fxyz = force;
+    if ( param.isFlatMembrane == false ) {
+        return fxyz;
+    }
     double sidex = param.sideX; double sidey = param.sideY; double l = param.l;
     int n = round(sidex/l); double dx = sidex/n; // x axis division
     double a = dx;
@@ -1420,7 +1530,6 @@ mat manage_ghost_force(mat force, Mat<int> face, Param param){
     
     int vertexnum = (n+1)*(m+1);
     int facenum = m*n*2;
-    mat fxyz = force;
     if ( param.isBoundaryFixed == true ){
         #pragma omp parallel for 
         for (int i = 0; i < facenum; i++){
@@ -1449,7 +1558,13 @@ mat manage_ghost_force(mat force, Mat<int> face, Param param){
     }
     return fxyz;
 }
+
 mat update_vertex(mat vertex, Mat<int> face, double a, mat force, Param param){
+    mat vertexnew = vertex + a * force;
+    if ( param.isFlatMembrane == false ){
+        return vertexnew;
+    }
+
     double sidex = param.sideX; double sidey = param.sideY; double l = param.l;
     int n = round(sidex/l); double dx = sidex/n; // x axis division
     double aa = dx;
@@ -1459,8 +1574,6 @@ mat update_vertex(mat vertex, Mat<int> face, double a, mat force, Param param){
     
     int vertexnum = (n+1)*(m+1);
     int facenum = m*n*2;
-    
-    mat vertexnew = vertex + a * force;
 
     if ( param.isBoundaryFixed == true ){
         Row<int> isBoundaryFace = param.isBoundaryFace;
@@ -1650,7 +1763,33 @@ struct LocalFinerMesh{
     int centerVertexIndex;
     Row<int> sixVerticeHexagon;
     Row<int> faceIndex;
+    //Row<int> outBoundaryRingFaceIndex;
 };
+
+vector<bool> determine_isLocallyFinerFace(Mat<int> face, LocalFinerMesh localFinerMesh){
+    int facenum = face.n_rows;
+    vector<bool> isLocallyFinerFace(facenum, false);
+    for ( int i = 0; i < localFinerMesh.faceIndex.n_cols; i++ ){
+        int faceindex = localFinerMesh.faceIndex(i);
+        isLocallyFinerFace[faceindex] = true;
+    }
+    return isLocallyFinerFace;
+}
+
+vector<bool> determine_isLocallyFinerFaceMostEdge(Mat<int> face, LocalFinerMesh localFinerMesh, Mat<int> closest_nodes){
+    int facenum = face.n_rows;
+    vector<bool> isLocallyFinerFaceMostEdge(facenum, false);
+    for ( int i = 0; i < localFinerMesh.faceIndex.n_cols; i++ ){
+        int faceindex = localFinerMesh.faceIndex(i);
+        for ( int j = 0; j < 3; j++ ){
+            int nodetmp = face(faceindex,j);
+            if (closest_nodes(nodetmp,6) != -1 ){ // this node has 7 valence.
+                isLocallyFinerFaceMostEdge[faceindex] = true;
+            }
+        }
+    }
+    return isLocallyFinerFaceMostEdge;
+}
 
 // subdivide one triangle for one time, so it is divided into four smaller triangles. Meanwhile the vertex and face matrix need to be updated! 
 void subdivide_one_triangle(mat& vertex, Mat<int>& face, int originalVertexNumber, int faceTarget){
@@ -1789,28 +1928,6 @@ void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<i
    
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // subdivide each select face except the last round! 
-    // For faces of the last round, some of them need to be bisected, but some do not!
-    vector<bool> needBisect(selectLocalFaces.n_cols, false);
-    Mat<int> twoVertexIndex(selectLocalFaces.n_cols, 2); twoVertexIndex.fill(-1);
-    for ( int i = 0; i < selectLocalFaces.n_cols; i++ ){
-        int facetmp = selectLocalFaces(selectLocalFaces.n_rows-1, i);
-        if ( facetmp == -1 ) continue;
-        // check whether this face needs to be bisect! The criterion is: this face has two common vertices with one of the inner ring face 
-        Row<int> threeNodes1 = face.row(facetmp);
-        for ( int j = 0; j < selectLocalFaces.n_cols; j++ ){
-            int facetmpInner = selectLocalFaces(selectLocalFaces.n_rows-2, j); // the second most boundary ring
-            if ( facetmpInner == -1 ) continue;
-            Row<int> threeNodes2 = face.row(facetmpInner);
-            Row<int> commonVertexIndex = intersect(threeNodes1,threeNodes2);
-            if ( commonVertexIndex.n_cols == 2 ){
-                needBisect[i] = true;
-                twoVertexIndex.row(i) = commonVertexIndex;               
-                break;
-            }
-        }
-    }
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // subdivide each select face except the last round! 
     // the subdivision makes each triangle into 4 smaller triangles! So the vertex and face matrix need to be updated at the same time!
     for ( int i = 0; i < selectLocalFaces.n_rows - 1; i++ ){
         for ( int j = 0; j < selectLocalFaces.n_cols; j++ ){
@@ -1825,10 +1942,30 @@ void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<i
         int facetmp = selectLocalFaces(selectLocalFaces.n_rows-1, i);
         if ( facetmp == -1 ) continue;
         /////////////////////////////////////////////
-        if ( needBisect[i] == true ){
-            // order the 3 vertice, make the first two on the bisection line, and the order is counter-clockwise
-            int node0 = twoVertexIndex(i,0);
-            int node1 = twoVertexIndex(i,1);
+        // check whether this face needs to be bisect! The criterion is: this face center to the centerVertexIndex is further than two of its 3 vertices 
+        rowvec centertmp(3); centertmp.fill(0.0); // center of the face
+        for (int j = 0; j < 3; j++){
+            int node = face(facetmp, j);
+            centertmp = centertmp + 1.0/3.0 * vertex.row(node);
+        }
+        double distCenter = norm(centertmp - vertex.row(centerVertexIndex), 2);
+        int count = 0;
+        Row<int> threeVertexIndex(3); threeVertexIndex.fill(-1);
+        for (int j = 0; j < 3; j++){
+            int node = face(facetmp, j);
+            double disttmp = norm(vertex.row(node) - vertex.row(centerVertexIndex), 2);
+            if ( distCenter > disttmp ){
+                count = count + 1;
+                threeVertexIndex(count-1) = node;
+            }
+        }
+
+        /////////////////////////////////////////////
+        // bisect the face
+        if ( count == 2 ){
+            // order the 3 vertice, make the first two on the bisection line
+            int node0 = threeVertexIndex(0);
+            int node1 = threeVertexIndex(1);
             int node2;
             for (int j = 0; j < 3; j++){
                 int nodetmp = face(facetmp, j);
@@ -1836,14 +1973,10 @@ void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<i
                     node2 = nodetmp;
                 }
             }
-            rowvec vec1 = vertex.row(node1) - vertex.row(node0);
-            rowvec vec2 = vertex.row(node2) - vertex.row(node0);
-            mat shutmp = cross(vec1,vec2) * strans( vertex.row(node0) );
-            if ( shutmp(0,0) < 0.0 ){
-                int nodetmp = node0;
-                node0 = node1;
-                node1 = nodetmp;
-                node2 = node2;
+            if ( node0 == face(facetmp,0) && node1 == face(facetmp,2) ){
+                node0 = face(facetmp,2);
+                node1 = face(facetmp,0);
+                node2 = face(facetmp,1);
             }
             // bisect the line node0-node1
             rowvec bisectNode = 1.0/2.0 * ( vertex.row(node0) + vertex.row(node1) );
@@ -1910,10 +2043,13 @@ void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<i
 }
 
 void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double radiusForFinest, Mat<int>& faces_with_nodei, LocalFinerMesh& localFinerMesh, Row<int>& isBoundaryNode, Row<int>& isBoundaryFace, Row<int>& isGhostNode, Row<int>& isGhostFace, vector<int>& ghostPartner, vector<vector<int>>& freePartners ){
+    // the smallest edge of the mesh, about half the lipid edge. The target edge length around the insertion is 0.5 nm. 
+    double targetEdge = 0.5; 
     if ( radiusForFinest < finestL ){
-        cout<<"   No need for local-finer, because the selected domain is too small!" <<endl;
+        cout<<"   No need for local-finer, because the selected area is too small: Mesh finestL = " << finestL << " nm, RadiusForLocalFiner = " << radiusForFinest << " nm." <<endl;
         return;
     }
+
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // find the center vertex. 
     int centerVertexIndex = 0;
@@ -1935,9 +2071,6 @@ void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double
         }
     }
     
-    // the smallest edge of the mesh, about half the lipid edge. The target edge length around the insertion is 0.5 nm. 
-    double targetEdge = 0.5; 
-
     // determine how many times of local-finer are needed.
     int times = round(log2(finestL/targetEdge)) ; 
     
@@ -2048,7 +2181,6 @@ void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double
                 localFinerMesh.faceIndex(i) = faceindex_present;
             }
         }
- 
     }
 }
 
@@ -2077,122 +2209,219 @@ int find_face(int node1, int node2, int faceindex, Mat<int> vertexi_face){
     return facetarget;
 }
 
-Mat<int> select_insertionPatch(Mat<int> face, mat vertex, Mat<int> faces_with_nodei, LocalFinerMesh localFinerMesh, double meanL, double insertLength, double insertWidth, int insertionPatchNum, double distBetwn){
-    // if the membrane is flat, insertionpatch is located almost at the center of the membrane 
+struct InsertionTemplate{
+    rowvec center;
+    rowvec direction;
+};
 
+// the templates include the insetionPatches' centers and directions
+// templates are all located on x-y plane, with their geometry center being [0,0,0].
+// the flat membrane: x is direction
+vector<InsertionTemplate> build_insertion_templates(int insertionPatchNum, double distBetwn, bool isInsertionsParallel){
+    vector<InsertionTemplate> templates(insertionPatchNum);
+    if ( insertionPatchNum == 1 ){
+        templates[0].center << 0.0 << 0.0 << 0.0 << endr;
+        templates[0].direction << 1.0 << 0.0 << 0.0 << endr;
+    }else if ( insertionPatchNum == 2 ){
+        templates[0].center << 0.0 << -0.5*distBetwn << 0.0 << endr; templates[0].direction << 1.0 << 0.0 << 0.0 << endr;
+        templates[1].center << 0.0 << +0.5*distBetwn << 0.0 << endr; templates[1].direction << 1.0 << 0.0 << 0.0 << endr;
+    }else if ( insertionPatchNum == 3 ){
+        if ( isInsertionsParallel == true ){
+            templates[0].center << 0.0 << -distBetwn << 0.0 << endr; templates[0].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[1].center << 0.0 << 0.0 << 0.0 << endr;        templates[1].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[2].center << 0.0 << +distBetwn << 0.0 << endr; templates[2].direction << 1.0 << 0.0 << 0.0 << endr;
+        }else{
+            double rho = distBetwn / sqrt(3.0);
+            double angle0 = M_PI/2.0; 
+            double angle1 = 7.0/6.0*M_PI; 
+            double angle2 = -1.0/6.0*M_PI;
+            templates[0].center << rho*cos(angle0) << rho*sin(angle0) << 0.0 << endr; templates[0].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[1].center << rho*cos(angle1) << rho*sin(angle1) << 0.0 << endr; templates[1].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[2].center << rho*cos(angle2) << rho*sin(angle2) << 0.0 << endr; templates[2].direction << 1.0 << 0.0 << 0.0 << endr;
+        }
+    }else if ( insertionPatchNum == 4 ){
+        if ( isInsertionsParallel == true ){
+            templates[0].center << 0.0 << -1.5*distBetwn << 0.0 << endr; templates[0].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[1].center << 0.0 << -0.5*distBetwn << 0.0 << endr; templates[1].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[2].center << 0.0 << +0.5*distBetwn << 0.0 << endr; templates[2].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[3].center << 0.0 << +1.5*distBetwn << 0.0 << endr; templates[3].direction << 1.0 << 0.0 << 0.0 << endr;
+        }else{
+            double rho = distBetwn / sqrt(2.0);
+            double angle0 = M_PI/4.0; 
+            double angle1 = 3.0/4.0*M_PI; 
+            double angle2 = 5.0/4.0*M_PI; 
+            double angle3 = 7.0/4.0*M_PI;
+            templates[0].center << rho*cos(angle0) << rho*sin(angle0) << 0.0 << endr; templates[0].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[1].center << rho*cos(angle1) << rho*sin(angle1) << 0.0 << endr; templates[1].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[2].center << rho*cos(angle2) << rho*sin(angle2) << 0.0 << endr; templates[2].direction << 1.0 << 0.0 << 0.0 << endr;
+            templates[3].center << rho*cos(angle3) << rho*sin(angle3) << 0.0 << endr; templates[3].direction << 1.0 << 0.0 << 0.0 << endr;
+        }
+    }
+    return templates;
+}
+
+vector<InsertionTemplate> generate_insertionCentersDirections_accordingTemplates(bool isFlatMembrane, vector<InsertionTemplate> templates, mat vertex, LocalFinerMesh localFinerMesh){
+    vector<InsertionTemplate> insertions = templates;
+
+    rowvec geometryCenterTemplates(3); geometryCenterTemplates << 0.0 << 0.0 << 0.0 << endr;
+    rowvec geometryDirectionTemplates(3); geometryDirectionTemplates << 0.0 << 0.0 << 1.0 << endr;
+
+    rowvec geometryCenterTarget = vertex.row(localFinerMesh.centerVertexIndex);
+
+    rowvec geometryDirectionTarget = geometryCenterTarget / norm(geometryCenterTarget, 2);
+    if (isFlatMembrane == true){ // specially for flat membrane.
+        geometryDirectionTarget << 0.0 << 0.0 << 1.0 << endr;
+    }
+    
+    // rotate templates from its direction to the target direction.
+    // calculate the rotation angles along x, y, z axis: alpha, peta, gama. Actually, gama = 0. It means, only need to rotate along x and y axis.
+    // rotation angle along x: alpha
+    rowvec n1 = geometryDirectionTemplates;
+    rowvec nt = geometryDirectionTarget;
+    double alpha1 = 0.5 * M_PI;
+    double alpha2 = acos( nt(1) / sqrt( nt(1)*nt(1) + nt(2)*nt(2) ) );
+    if ( nt(2) < 0.0 ) alpha2 = 2.0*M_PI - alpha2;
+    double alpha = alpha2 - alpha1;
+    // rotation angle along y: peta
+    double peta1 = 0.5 * M_PI;
+    double peta2 = acos( nt(0) / sqrt( nt(0)*nt(0) + nt(2)*nt(2) ) );
+    if ( nt(2) < 0.0 ) peta2 = 2.0*M_PI - peta2;
+    double peta = peta2 - peta1;
+    // rotation angle along z: gama
+    double gama = 0.0;
+    
+    // rotate now
+    mat Rx(3,3); Rx << 1.0 << 0.0 << 0.0 << endr
+                    << 0.0 << cos(alpha) << -sin(alpha) << endr
+                    << 0.0 << sin(alpha) << cos(alpha) << endr;
+    mat Ry(3,3); Ry << cos(peta) << 0.0 << sin(peta) << endr
+                    << 0.0 << 1.0 << 0.0 << endr
+                    << -sin(peta) << 0.0 << cos(peta) << endr;
+
+    for ( int i = 0; i < templates.size(); i++ ){
+        // rotate the centers and then move to the target position
+        mat tmp = Rx * strans(templates[i].center);
+        tmp = Ry * tmp;
+        insertions[i].center = strans(tmp.col(0));
+        insertions[i].center = insertions[i].center + geometryCenterTarget;
+        // rotate the directions
+        tmp = Rx * strans(templates[i].direction);
+        tmp = Ry * tmp;
+        insertions[i].direction = strans(tmp.col(0));
+    }
+
+    // on sphere, the surface is curved. Adjust the centers to be on the surface
+    //double radius = norm(vertex.row(0));
+    //for (int i = 0; i < insertions.size(); i++){
+    //}
+
+    return insertions;
+}
+
+Row<int> find_oneInsertion_accordingToCenterAndDirection(bool isFlatMembrane, Mat<int> face, mat vertex, Mat<int> faces_with_nodei, LocalFinerMesh localFinerMesh, double meanL, double insertLength, double insertWidth, InsertionTemplate targetCenterDirection){
     double triangleS = sqrt(3.0)/4.0 * meanL * meanL;
     int n2 = round(insertWidth/(sqrt(3.0)/2.0*meanL));
     int n1 = round( insertLength * insertWidth / triangleS / n2 );
-
-    // for each insertionpatch, we need 2*n1 *n2 triangles
+    // for each insertionpatch, we need n1 *n2 triangles
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // build insertionpatch matrix to store the face indexes as the insertionpatch
-    Mat<int> insertionpatch;
-    if ( insertionPatchNum == 0 ){
-        return insertionpatch;
-    }else{
-        insertionpatch.set_size(insertionPatchNum,n1 * n2);
-        insertionpatch.fill(-1);
-    }
+    Row<int> insertionpatch(n1 * n2); insertionpatch.fill(-1);
+
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // to find the first triangle, set it as the 0
-    // for flat membrane, the first triangle is located almost at the center of the membrane if only one insertion
-    double x0 = 0.5 * ( max(vertex.col(0)) + min(vertex.col(0)) ) - distBetwn/2.0;
-    double y0 = 0.5 * ( max(vertex.col(1)) + min(vertex.col(1)) ) - insertLength/2.0;
-    double z0 = vertex(0,2);
-    rowvec center0(3); center0 << x0 << y0 << z0 << endr;
-    rowvec direction(3); direction << 0.0 << 1.0 << 0.0 << endr; // point along +x axis. needs to be adjust according to the real insertionpatch
-    // define directn2
-    // for flat membrane, it is almost towards +x
-    rowvec directn2(3);
-    // find the face which is closest to the center0
+    rowvec direction = targetCenterDirection.direction; 
+    rowvec center0 = targetCenterDirection.center - direction*(insertLength/2.0); 
+
+    // find the face0 which is closest to the center0, as the first face of the insertion
     int face0; 
     if ( localFinerMesh.buildLocalFinerMesh == false ){
-        double shu = 1e8;
+        double shu = 1.0e8;
         for ( int i = 0; i < face.n_rows; i++ ){
-            int node0 = face(i,0);
-            int node1 = face(i,1);
-            int node2 = face(i,2);
+            int facetmp = i;
+            int node0 = face(facetmp,0);
+            int node1 = face(facetmp,1);
+            int node2 = face(facetmp,2);
             rowvec centertmp = 1.0/3.0 * ( vertex.row(node0) + vertex.row(node1) + vertex.row(node2) );
             double disttmp = norm(centertmp - center0, 2); 
             if ( disttmp < shu ){
                 shu = disttmp;
-                face0 = i;
+                face0 = facetmp;
             }
         }
-        // adjust direction according to the vertex of the face0. set it along one edge of face0 which is closest to the original direction
-        bool needAdjustDirecton = true;
-        if ( needAdjustDirecton == true ){
-            double shu = 0.0;
-            int node0, node1;
-            for ( int i = 0; i < 3; i++ ){
-                int nodei = face(face0,i);
-                int nodei1;
-                if ( i+1 > 2){ 
-                    nodei1 = face(face0,0);
-                }else{
-                    nodei1 = face(face0,i+1);
-                }
-                rowvec directtmp = vertex.row(nodei1) - vertex.row(nodei); directtmp = directtmp / norm(directtmp,2);
-                mat shutmp = directtmp * strans(direction);
-                if ( shutmp(0,0) > shu ){
-                    shu = shutmp(0,0);
-                    node0 = nodei;
-                    node1 = nodei1;
-                }
-                directtmp = - directtmp;
-                shutmp = directtmp * strans(direction);
-                if ( shutmp(0,0) > shu ){
-                    shu = shutmp(0,0);
-                    node0 = nodei1;
-                    node1 = nodei;
-                }
-            }
-            direction = vertex.row(node1) - vertex.row(node0); 
-            direction = direction / norm(direction,2); // adjust this direction along vertex
-        }
-        rowvec zdirection(3); zdirection << 0.0 << 0.0 << 1.0 << endr;
-        directn2 = cross(direction,zdirection); directn2 = directn2 / norm(directn2,2);
     }else{
-
-        int centerVertex = localFinerMesh.centerVertexIndex;
-        int oneVertex = localFinerMesh.sixVerticeHexagon(0);
-        direction = vertex.row(oneVertex) - vertex.row(centerVertex); direction = direction / norm(direction,2);
-        
-        // find the suitable face as the first face, considering the distance between insertions and the insertion size
-        rowvec vec1 = - direction; //vertex.row(localFinerMesh.sixVerticeHexagon(3)) - vertex.row(centerVertex); vec1 = vec1 / norm(vec1,2); 
-        vec1 = vec1 * (insertLength/2.0);
-        
-        rowvec zdirection(3); zdirection << 0.0 << 0.0 << 1.0 << endr;
-        directn2 = cross(direction,zdirection); directn2 = directn2 / norm(directn2,2);
-        mat shutmp = (center0 - vertex.row(centerVertex)) * strans(directn2);
-        if ( shutmp(0,0) > 0.0 ){
-            directn2 = cross(zdirection, direction); directn2 = directn2 / norm(directn2,2);
-        }
-
-        rowvec vec2 = - directn2;
-        vec2 = vec2 * (insertWidth/2.0 + distBetwn*(insertionPatchNum-1)/2.0);
-        vec2 = vec2 * 0.0;
-        rowvec vectarget = vec1 + vec2 + vertex.row(centerVertex); // vectarget = vectarget / norm(vectarget,2);
-        double criterion = 1.0e9;
+        double shu = 1.0e8;
         for ( int i = 0; i < localFinerMesh.faceIndex.n_cols; i++ ){ 
             int facetmp = localFinerMesh.faceIndex(i);
-            for ( int k = 0; k < 3; k++ ){
-                double dist = norm(vertex.row(face(facetmp,k))-vectarget, 2 );
-                if ( dist < criterion ){
-                    criterion = dist;
-                    face0 = facetmp;
-                    center0 = 1.0/3.0*( vertex.row(face(facetmp,0)) + vertex.row(face(facetmp,1)) + vertex.row(face(facetmp,2)) );
-                }
+            int node0 = face(facetmp,0);
+            int node1 = face(facetmp,1);
+            int node2 = face(facetmp,2);
+            rowvec centertmp = 1.0/3.0 * ( vertex.row(node0) + vertex.row(node1) + vertex.row(node2) );
+            double disttmp = norm(centertmp - center0, 2); 
+            if ( disttmp < shu ){
+                shu = disttmp;
+                face0 = facetmp;
             }
         }
     }
-    insertionpatch(0,0) = face0;
+    insertionpatch(0) = face0;
+
+    // define the direction1 and direction2
+    rowvec direction1(3); 
+    {
+        double shu = 0.0;
+        int node0 = -1; int node1 = -1;
+        for ( int i = 0; i < 3; i++ ){
+            int nodei = face(face0,i);
+            int nodei1;
+            if ( i+1 > 2){ 
+                nodei1 = face(face0,0);
+            }else{
+                nodei1 = face(face0,i+1);
+            }
+            rowvec directtmp = vertex.row(nodei1) - vertex.row(nodei); directtmp = directtmp / norm(directtmp,2);
+            mat shutmp = directtmp * strans(direction);
+            if ( shutmp(0,0) > shu ){
+                shu = shutmp(0,0);
+                node0 = nodei;
+                node1 = nodei1;
+            }
+            directtmp = - directtmp;
+            shutmp = directtmp * strans(direction);
+            if ( shutmp(0,0) > shu ){
+                shu = shutmp(0,0);
+                node0 = nodei1;
+                node1 = nodei;
+            }
+        }
+        direction1 = vertex.row(node1) - vertex.row(node0); 
+        direction1 = direction1 / norm(direction1,2); 
+    }
+    rowvec direction2(3);
+    {
+        int node0 = face(face0,0);
+        int node1 = face(face0,1);
+        int node2 = face(face0,2);
+        rowvec centertmp = 1.0/3.0 * ( vertex.row(node0) + vertex.row(node1) + vertex.row(node2) );
+        if ( isFlatMembrane == true ){
+            centertmp << 0.0 << 0.0 << 1.0 << endr;
+        }
+        direction2 = cross(centertmp/norm(centertmp,2), direction1);
+        // make sure direction2 is not pointing towards the face0's center.
+        centertmp = 1.0/3.0 * ( vertex.row(node0) + vertex.row(node1) + vertex.row(node2) );
+        rowvec v0 = vertex.row(node0) - centertmp;
+        rowvec v1 = vertex.row(node1) - centertmp;
+        rowvec v2 = vertex.row(node2) - centertmp;
+        mat tmp = ( direction2 * strans(v0) ) * ( direction2 * strans(v1) ) * ( direction2 * strans(v2) );
+        if ( tmp(0,0) > 0 )
+            direction2 = -direction2;
+
+        direction2 = direction2 / norm(direction2,2); 
+    }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // row0 patches along n1
+    // row0 triangles along n1
     for ( int i = 1; i < n1; i++ ){
-        int facepre = insertionpatch(0,i-1); // prior face index
+        int facepre = insertionpatch(i-1); // prior face index
         rowvec centerpre = 1.0/3.0*( vertex.row(face(facepre,0)) + vertex.row(face(facepre,1)) + vertex.row(face(facepre,2)) );
         int facetarget = -1;
         double shu = 0.0;
@@ -2207,33 +2436,22 @@ Mat<int> select_insertionPatch(Mat<int> face, mat vertex, Mat<int> faces_with_no
             int facetmp = find_face(nodei, nodei1, facepre, faces_with_nodei); // facepre's mirror face, symetry of the line nodei-nodei1
             rowvec centertmp = 1.0/3.0*( vertex.row(face(facetmp,0)) + vertex.row(face(facetmp,1)) + vertex.row(face(facetmp,2)) );
             rowvec directtmp = centertmp - centerpre; directtmp = directtmp / norm(directtmp,2);
-            mat shutmp = directtmp * strans(direction);
+            mat shutmp = directtmp * strans(direction1);
             if (  shutmp(0,0) > shu ){
                 shu = shutmp(0,0);
                 facetarget = facetmp;
             }
         }
-        insertionpatch(0,i) = facetarget;
+        insertionpatch(i) = facetarget;
     }
 
     //////////////////////////////////////////////////
     // row0 patches along n2
-    // adjust directn2, to make sure the two adjacent row0 are closely attached.
-    for ( int i = 0; i < 3; i++ ){
-        rowvec centerref = 1.0/3.0*( vertex.row(face(face0,0)) + vertex.row(face(face0,1)) + vertex.row(face(face0,2)) );
-        rowvec directtmp = vertex.row(face(face0,i)) - centerref; directtmp = directtmp / norm(directtmp,2);
-        mat shutmp = directn2 * strans( directtmp );
-        if ( acos(shutmp(0,0)) < 40.0/180.0 * M_PI  ){
-            directn2 = - directn2;
-        }     
-    }
-    
-    // for flat membrane, it is almost towards +x
     for ( int i = 1; i < n2; i++ ){
         for ( int j = 0; j < n1; j++ ){
             int indexnow = n1*i + j;
             int indexpre = n1*(i-1) + j;
-            int faceref = insertionpatch(0,indexpre);
+            int faceref = insertionpatch(indexpre);
             rowvec centerref = 1.0/3.0*( vertex.row(face(faceref,0)) + vertex.row(face(faceref,1)) + vertex.row(face(faceref,2)) );
             int facetarget = -1;
             double shu = 0.0;
@@ -2244,34 +2462,50 @@ Mat<int> select_insertionPatch(Mat<int> face, mat vertex, Mat<int> faces_with_no
                     if ( facetmp == -1 || facetmp == faceref ) continue;
                     rowvec centertmp = 1.0/3.0*( vertex.row(face(facetmp,0)) + vertex.row(face(facetmp,1)) + vertex.row(face(facetmp,2)) );
                     rowvec directtmp = centertmp - centerref; directtmp = directtmp / norm(directtmp,2);
-                    mat shutmp = directtmp * strans(directn2);
+                    mat shutmp = directtmp * strans(direction2);
                     if (  shutmp(0,0) > shu ){
                         shu = shutmp(0,0);
                         facetarget = facetmp;
                     }
                 }
             }
-            insertionpatch(0,indexnow) = facetarget;
+            insertionpatch(indexnow) = facetarget;
         }
     } 
 
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // for multiple insertions, parallel to each other!!!
-    rowvec radiuss(vertex.n_rows); radiuss.fill(0);
-    for (int i = 0; i < vertex.n_rows; i++){
-        radiuss(i) = norm(vertex.row(i),2.0);
+    for ( int i = 0; i < insertionpatch.n_cols; i++ ){
+        if (insertionpatch(i) == -1){
+            cout << "Wrong: the insertionpatch is not found correctly! Happens in: find_oneInsertion_accordingToCenterAndDirection. " << endl;
+            exit(0);
+        }
     }
-    double radius = mean(radiuss);
-    
-    for (int i = 1; i < insertionPatchNum; i++){
-        double distancetmp = distBetwn * i; 
-        Row<int> insertPatchtmp;
-        // insertPatchtmp = determine_parallel_insertionPatch(face, vertex, faces_with_nodei, meanL, insertLength, insertWidth, radius, direction, directn2, center0, distancetmp);
-        insertionpatch.row(i) = insertPatchtmp;
+
+    return insertionpatch;
+}
+
+Mat<int> select_insertionPatch(bool isFlatMembrane, Mat<int> face, mat vertex, Mat<int> faces_with_nodei, LocalFinerMesh localFinerMesh, double meanL, double insertLength, double insertWidth, int insertionPatchNum, double distBetwn, bool isInsertionsParallel){
+    // build insertionpatch matrix to store the face indexes as the insertionpatch
+    Mat<int> insertionpatch;
+    if ( insertionPatchNum == 0 ){
+        return insertionpatch;
+    }
+    vector<InsertionTemplate> templates = build_insertion_templates(insertionPatchNum, distBetwn, isInsertionsParallel);
+    vector<InsertionTemplate> insertionsCenterDirection = generate_insertionCentersDirections_accordingTemplates(isFlatMembrane, templates, vertex, localFinerMesh); 
+
+    for ( int i = 0; i < insertionPatchNum; i++ ){
+        Row<int> oneInsertion = find_oneInsertion_accordingToCenterAndDirection(isFlatMembrane, face, vertex, faces_with_nodei, localFinerMesh, meanL, insertLength, insertWidth, insertionsCenterDirection[i]);
+        if ( i > 0 ){
+            if ( insertionpatch.n_cols != oneInsertion.n_cols ){
+                cout << "Wrong: insertions are not the same size! "<< endl;
+                exit(0);
+            }
+        }
+        insertionpatch.resize(insertionpatch.n_rows + 1, oneInsertion.n_cols);
+        insertionpatch.row(i) = oneInsertion;
     }
     
-   return insertionpatch;
-} 
+    return insertionpatch;
+}
 
 Row<int> select_insertionPatchAdjacent(Mat<int> faceout, mat vertexout, Mat<int> faces_with_nodei, Mat<int> insertionpatch){
     Row<int> adjacent(faceout.n_rows);
@@ -2345,3 +2579,82 @@ Row<int> select_insertionPatchAdjacent(Mat<int> faceout, mat vertexout, Mat<int>
 
     return out;
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// the following functions are for flip-flop ratio
+// R is the radius of the sphere. 
+// h is the monolayer thickness, c0 is the monolayer spontaneous curvature, kc is the monolayer bending modulus. us is the monolayer area modulus.
+// 1 is the inner layer, and 2 is the outer layer
+double calculate_flipflopRatio(bool isFlatMembrane, double S0mid, double h1, double c01, double kc1, double us1, double h2, double c02, double kc2, double us2){
+    if (isFlatMembrane == true){
+        return 0.0;
+    }
+    
+    double R = sqrt(S0mid/4.0/M_PI);
+    double gama1 = 0.0;
+    double gama2 = 0.99;
+    double gamatmp; // = 2.0 * R * h /(pow(R,2.0) + pow(h,2.0));
+    double rightHand = kc1 * pow(2.0/(R-h1)-c01 ,2.0) + kc2 * pow(2.0/(R+h2)-c02 ,2.0); 
+    double leftHand1 = us1 * pow((R-h1)/R,4.0)/pow(1.0-gama1,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gama1,2.0) - (us1-us2); 
+    double leftHand2 = us1 * pow((R-h1)/R,4.0)/pow(1.0-gama2,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gama2,2.0) - (us1-us2); 
+    if ( (leftHand1-rightHand)*(leftHand2-rightHand) < 0.0 ){
+        gama1 = gama1; 
+        gama2 = gama2;
+    }else{
+        cout<<"Warning: multiple values of flip-flop ratio exist in [0,1]."<<endl;
+        double gamatmp = 0.5 * (gama1 + gama2);
+        double leftHandtmp = us1 * pow((R-h1)/R,4.0)/pow(1.0-gamatmp,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gamatmp,2.0) - (us1-us2); 
+        while ( (leftHand1-rightHand)*(leftHandtmp-rightHand) > 0.0 ){
+            gamatmp = gama1 + 0.9 * (gamatmp - gama1);
+            leftHandtmp = us1 * pow((R-h1)/R,4.0)/pow(1.0-gamatmp,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gamatmp,2.0) - (us1-us2); 
+            if ( abs(gamatmp - gama1) < 1.0e-2 ){
+                cout<<"No acurate flip-flop ratio is found! But to use the approximate one!"<<endl;
+                double h = (h1 + h2) / 2.0;
+                return 2.0 * R * h /(pow(R,2.0) + pow(h,2.0));
+            }
+        }
+        gama1 = gama1;
+        gama2 = gamatmp;
+    }
+    
+    double criterion = 1.0e-2;
+    while ( abs(gama2 - gama1) > criterion ){
+        leftHand1 = us1 * pow((R-h1)/R,4.0)/pow(1.0-gama1,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gama1,2.0) - (us1-us2); 
+        leftHand2 = us1 * pow((R-h1)/R,4.0)/pow(1.0-gama2,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gama2,2.0) - (us1-us2); 
+        double gamatmp = 0.5 * (gama1 + gama2);
+        double leftHandtmp = us1 * pow((R-h1)/R,4.0)/pow(1.0-gamatmp,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gamatmp,2.0) - (us1-us2); 
+        if ( (leftHand1-rightHand)*(leftHand2-rightHand) > 0.0 ){
+            cout<<"Wrong to find the flip-flop ratio!"<<endl;
+            exit(0);
+        }else{
+            if ( (leftHand1-rightHand)*(leftHandtmp-rightHand) > 0.0 ){
+                gama1 = gamatmp; 
+                gama2 = gama2;
+            }else if ( (leftHand2-rightHand)*(leftHandtmp-rightHand) > 0.0 ){
+                gama1 = gama1; 
+                gama2 = gamatmp;
+            }
+        }
+     }
+     double gama = 0.5 * (gama1 + gama2);
+     return gama;
+}
+
+////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////
+// h01: thickness_in; h02, thickness_out
+void determine_Target_Height_for_Each_Monolayer(double h01, double h02, mat vertex, double& H0C1, double& H0C2){
+    // out-layer
+    double Cout = 0.0; // mean curvature of the out-layer, Flat membrane
+    double C = Cout;
+    double h0 = h02;
+    H0C2 = h0 * ( 1.0 + 1.0*C*h0 ) + 2.0/3.0 * pow(h0,3.0) * pow(C,2.0); 
+
+    // in-layer
+    double Cin = 0.0; // mean curvature of the in-layer, Flat membrane
+    C = -Cin;  // note the sign of the curvature of the inlayer is opposite to the one of the outlayer
+    h0 = h01;
+    H0C1 = h0 * ( 1.0 + 1.0*C*h0 ) + 2.0/3.0 * pow(h0,3.0) * pow(C,2.0); 
+}
+
