@@ -10,7 +10,50 @@
 using namespace std;
 using namespace arma;
 
+struct Vertex3Layers{
+    mat inlayer;
+    mat midlayer;
+    mat outlayer;
+};
+struct Force3Layers{
+    mat inlayer;
+    mat midlayer;
+    mat outlayer;
+};
+
+/*
+struct Face3Layers{
+    Mat<int> inlayer;
+    Mat<int> midlayer;
+    Mat<int> outlayer;
+};
+*/
+
+struct SpontCurv3Layers{
+    rowvec inlayer;
+    rowvec outlayer;
+};
+
+struct IsInsertionpatch3Layers{
+    vector<bool> inlayer;
+    vector<bool> outlayer;
+};
+
+struct ElementS03Layers{
+    rowvec inlayer;
+    rowvec midlayer;
+    rowvec outlayer;
+};
+struct ElementV03Layers{
+    rowvec inlayer;
+    rowvec midlayer;
+    rowvec outlayer;
+};
+
 struct Param{
+    bool isFlatMembrane = false;
+    int currentStep;
+    bool includeDivTilt = false;
     // mesh parameters:
     double meanL;                                   // triangular side length, nm
     double sideX;                                   // rectangle sidelength x, nm
@@ -33,6 +76,7 @@ struct Param{
     double k_regularization;                         // coefficient of the regulerization constraint, 
     double gama_shape = 0.2;                         // factor of shape deformation
     double gama_area = 0.2;                          // factor of size deformation
+    bool   deformAreaOrShape = false;
     int    subDivideTimes = 5;                       // subdivision times for the irregular patches
     int    GaussQuadratureN = 2;                     // Gaussian quadrature integral 
 
@@ -41,31 +85,38 @@ struct Param{
     bool   isGlobalAreaConstraint = true;            // whether to use Global constraints for the area elasticity
     // out-layer (top layer)
     double kc_out  = 20.0*4.17/2.0;                  // pN.nm. bending modulus, out-monolayer 
+    double kst_out  = 0.0;                           // pN.nm. splay-tilt modulus, out-layer
     double us_out  = 250.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
     double Ktilt_out  = 90.0;                        // pN/nm = mN/m. tilt modulus
-    double Kthick_out = Ktilt_out + 2.0*us_out;      // pN/nm, coefficient of the membrane thickness. penalty term
+    double Kthick_out = 3.0*Ktilt_out;      // pN/nm, coefficient of the membrane thickness. 
     double thickness_out = 4.0/2.0;                  // nm, out-monolayer thickness. 
     double c0out = 0.0;                              // spontaneous curvature of membrane, out-layer. Convex is positive
     double S0out;                                    //target area
     double Sout;                                     // area, total area 
+    double H0C_out;  
     double V0out;                                    // target volume of the sphere
     double Vout;                                     // volume of the sphere      
     
     // in-layer (bottom layer)
     double kc_in  = kc_out;                          // pN.nm. bending modulus, in-monolayer 
+    double kst_in  = 0.0;                            // pN.nm. splay-tilt modulus, in-layer
     double us_in  = us_out;                          // pN/nm, area stretching modulus, in-monolayer; 0.5*us*(ds)^2/s0;
     double Ktilt_in  = Ktilt_out;                    // pN/nm = mN/m. tilt modulus
-    double Kthick_in = Ktilt_in + 2.0*us_in;
+    double Kthick_in = 3.0*Ktilt_in;         // pN/nm, coefficient of the membrane thickness. 
     double thickness_in = thickness_out;             // nm, in-monolayer thickness. 
     double c0in  = c0out;                            // spontaneous curvature of membrane, in-layer. Concave is positive
     double S0in;                                     // target area
     double Sin;                                      // area, total area 
+    double H0C_in;                                  // curvature-modified height; target height
     double V0in;                                     // target volume of the sphere
     double Vin;                                      // volume of the sphere      
     double uv;                                       // coefficeint of the volume constraint, 0.5*uv*(dv)^2/v0;
+ 
+    double Kthick_constraint;                        // height penalty.
 
     // insertion parameters:
     Mat<int> insertionpatch;
+    IsInsertionpatch3Layers isInsertionPatch;
     double c0out_ins = 0.3;                          // spontaneous curvature of insertion, outer layer
     double c0in_ins = 0.3;
     double s_insert  = 2.0;                          // insertion area
@@ -74,10 +125,12 @@ struct Param{
     rowvec insertionShapeEdgeLength; 
     Row<int> IsinertionpatchAdjacent;
     double K_adjacentPatch = 0.0;                    // constant for the shape constraint on the patches adjacent around insertion 
+    double Kthick_insertion;                         // pN/nm, coefficient of the membrane thickness at the insertion.  
 
     // system setup
     bool   duringStepsToIncreaseInsertDepth = false;
     vector<bool> isLocallyFinerFace;
+    vector<bool> isLocallyFinerFaceMostEdge;
 };  
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -669,7 +722,8 @@ Row<int> find_two_mirror_nodes(int node1, int node2, Mat<int> faces_with_nodei, 
 }
 
 void setsphere_Loop_scheme(mat& vertex, Mat<int>& face, double& meanl, double sphereRadius){
-    double r = sphereRadius * 1.42857; // nm
+    // double r = sphereRadius * 1.42857; // nm
+    double r = 20.0; // nm
     double l = 2.0; // nm. these two parameters will make a sphere of R = 28 nm. 
 
     double a = r*2.0*sin(M_PI/5.0)/(sqrt(4.0*pow(sin(M_PI/5.0),2.0)-1.0)+0.5*cos(M_PI/5.0)); // a is the side length of icosahedron
@@ -766,10 +820,10 @@ void setsphere_Loop_scheme(mat& vertex, Mat<int>& face, double& meanl, double sp
 
     //////////////////////////////////////////////////////////
     // adjust the vertex to make the sphere radius as target
-    //for (int i = 0; i < vertex.n_rows; i++){
-    //    double radiusTmp = norm(vertex.row(i), 2);
-    //    vertex.row(i) = vertex.row(i) * sphereRadius/radiusTmp;
-    //}
+    for (int i = 0; i < vertex.n_rows; i++){
+        double radiusTmp = norm(vertex.row(i), 2);
+        vertex.row(i) = vertex.row(i) * sphereRadius/radiusTmp;
+    }
 
     //////////////////////////////////////////////////////////
     // calculate the mean side-length 
@@ -976,6 +1030,109 @@ mat shapefunctions(rowvec vwu){
    sf(11,5) = 1.0/2.0*pow(w,2.0); 
    sf(11,6) = 1.0/2.0*pow(w,2.0);
    return sf;
+}
+
+mat setVMU(int n){
+    int dotsnumber = 1;
+    if (n==1){
+        dotsnumber = 1;
+        mat vmu(dotsnumber,3);
+        vmu << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr;
+        return vmu;
+    }else if(n==2){
+        dotsnumber = 3;
+        mat vmu(dotsnumber,3);
+        vmu << 1.0/6.0 << 1.0/6.0 << 4.0/6.0 << endr
+            << 1.0/6.0 << 4.0/6.0 << 1.0/6.0 << endr
+            << 4.0/6.0 << 1.0/6.0 << 1.0/6.0 << endr;
+        return vmu;
+    }else if(n==3){
+        dotsnumber = 4;
+        mat vmu(dotsnumber,3);
+        vmu << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr
+            << 1.0/5.0 << 1.0/5.0 << 3.0/5.0 << endr
+            << 1.0/5.0 << 3.0/5.0 << 1.0/5.0 << endr
+            << 3.0/5.0 << 1.0/5.0 << 1.0/5.0 << endr;
+        /*
+        vmu << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr
+            << 2.0/15.0 << 11.0/15.0 << 2.0/15.0 << endr
+            << 2.0/15.0 << 2.0/15.0 << 11.0/15.0 << endr
+            << 11.0/15.0 << 2.0/15.0 << 2.0/15.0 << endr;
+        */
+        return vmu;
+    }else if(n==4){
+        dotsnumber = 6;
+        mat vmu(dotsnumber,3);
+        vmu << 0.44594849091597 << 0.44594849091597 << 0.10810301816807 << endr
+            << 0.44594849091597 << 0.10810301816807 << 0.44594849091597 << endr
+            << 0.10810301816807 << 0.44594849091597 << 0.44594849091597 << endr
+            << 0.09157621350977 << 0.09157621350977 << 0.81684757298046 << endr
+            << 0.09157621350977 << 0.81684757298046 << 0.09157621350977 << endr
+            << 0.81684757298046 << 0.09157621350977 << 0.09157621350977 << endr;
+        return vmu;
+    }else if(n==5){
+        dotsnumber = 7;
+        mat vmu(dotsnumber,3);
+        vmu << 0.33333333333333 << 0.33333333333333 << 0.33333333333333 << endr
+            << 0.47014206410511 << 0.47014206410511 << 0.05971587178977 << endr
+            << 0.47014206410511 << 0.05971587178977 << 0.47014206410511 << endr
+            << 0.05971587178977 << 0.47014206410511 << 0.47014206410511 << endr
+            << 0.10128650732346 << 0.10128650732346 << 0.79742698535309 << endr
+            << 0.10128650732346 << 0.79742698535309 << 0.10128650732346 << endr
+            << 0.79742698535309 << 0.10128650732346 << 0.10128650732346 << endr;
+        return vmu;
+    }else if(n==6){
+        dotsnumber = 12;
+        mat vmu(dotsnumber,3);
+        vmu << 0.24928674517091 << 0.24928674517091 << 0.50142650965818 << endr
+            << 0.24928674517091 << 0.50142650965818 << 0.24928674517091 << endr
+            << 0.50142650965818 << 0.24928674517091 << 0.24928674517091 << endr
+            << 0.06308901449150 << 0.06308901449150 << 0.87382197101700 << endr
+            << 0.06308901449150 << 0.87382197101700 << 0.06308901449150 << endr
+            << 0.87382197101700 << 0.06308901449150 << 0.06308901449150 << endr
+            << 0.31035245103378 << 0.63650249912140 << 0.05314504984482 << endr
+            << 0.63650249912140 << 0.05314504984482 << 0.31035245103378 << endr
+            << 0.05314504984482 << 0.31035245103378 << 0.63650249912140 << endr
+            << 0.63650249912140 << 0.31035245103378 << 0.05314504984482 << endr
+            << 0.31035245103378 << 0.05314504984482 << 0.63650249912140 << endr
+            << 0.05314504984482 << 0.63650249912140 << 0.31035245103378 << endr;
+        return vmu;
+    }
+}
+
+rowvec setVMUcoefficient(int n){
+    int dotsnumber = 1;
+    if (n==1){
+        dotsnumber = 1;
+        rowvec vmucoeff(dotsnumber);
+        vmucoeff << 1.0 << endr;
+        return vmucoeff;
+    }else if(n==2){
+        dotsnumber = 3;
+        rowvec vmucoeff(dotsnumber);
+        vmucoeff << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr;
+        return vmucoeff;
+    }else if(n==3){
+        dotsnumber = 4;
+        rowvec vmucoeff(dotsnumber);
+        vmucoeff << -0.56250000000000 << 0.52083333333333 << 0.52083333333333 << 0.52083333333333 << endr;
+        return vmucoeff;
+    }else if(n==4){
+        dotsnumber = 6;
+        rowvec vmucoeff(dotsnumber);
+        vmucoeff << 0.22338158967801 << 0.22338158967801 << 0.22338158967801 << 0.10995174365532 << 0.10995174365532 << 0.10995174365532 << endr;
+        return vmucoeff;
+    }else if(n==5){
+        dotsnumber = 7;
+        rowvec vmucoeff(dotsnumber);
+        vmucoeff << 0.22500000000000 << 0.13239415278851 << 0.13239415278851 << 0.13239415278851 << 0.12593918054483 << 0.12593918054483 << 0.12593918054483 << endr;
+        return vmucoeff;
+    }else if(n==6){
+        dotsnumber = 12;
+        rowvec vmucoeff(dotsnumber);
+        vmucoeff << 0.11678627572638 << 0.11678627572638 << 0.11678627572638 << 0.05084490637021 << 0.05084490637021 << 0.05084490637021 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << endr;
+        return vmucoeff;
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1235,7 +1392,7 @@ void subdivision_matrix_sudoregular2(mat& M, mat& SM1, mat& SM2, mat& SM3, mat& 
 }
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// the following functions are for *********
+// the following are about algebra calculation
 
 void trans_time(mat a, mat b, mat& out){
     int rowa = a.n_rows; int cola = a.n_cols;
@@ -1258,24 +1415,34 @@ void trans_time(mat a, mat b, mat& out){
     //return out;
 }
 
-vec force_scale(mat forcein, mat forcemid, mat forceout){
-    int numin = forcein.n_rows;
-    int nummid = forcemid.n_rows;
-    int numout = forceout.n_rows;
-    vec out(numin+nummid+numout);
-    #pragma omp parallel for
-    for (int i = 0; i < numin; i++){
-        out(i) = norm(forcein.row(i),2);
+vec force3_scale(Force3Layers force3, bool isBilayerModel){
+    if ( isBilayerModel == false ){
+        int numout = force3.outlayer.n_rows;
+        vec out(numout);
+        #pragma omp parallel for
+        for (int i = 0; i < numout; i++){
+            out(i) = norm(force3.outlayer.row(i),2);
+        }
+        return out;
+    }else{
+        int numin = force3.inlayer.n_rows;
+        int nummid = force3.midlayer.n_rows;
+        int numout = force3.outlayer.n_rows;
+        vec out(numin + nummid + numout);
+        #pragma omp parallel for
+        for (int i = 0; i < numin; i++){
+            out(i) = norm(force3.inlayer.row(i),2);
+        }
+        #pragma omp parallel for
+        for (int i = numin; i < numin+nummid; i++){
+            out(i) = norm(force3.midlayer.row(i-numin),2);
+        }
+        #pragma omp parallel for
+        for (int i = numin+nummid; i < numin+nummid+numout; i++){
+            out(i) = norm(force3.outlayer.row(i-numin-nummid),2);
+        }
+        return out;
     }
-    #pragma omp parallel for
-    for (int i = numin; i < numin+nummid; i++){
-        out(i) = norm(forcemid.row(i-numin),2);
-    }
-    #pragma omp parallel for
-    for (int i = numin+nummid; i < numin+nummid+numout; i++){
-        out(i) = norm(forceout.row(i-numin-nummid),2);
-    }
-    return out;
 }
 
 vec toscale(mat forcein){
@@ -1300,6 +1467,41 @@ rowvec tovector(mat vertex){
     return vertex_row;
 }
 
+rowvec changeForce3ToVector(Force3Layers force3, bool isBilayerModel){
+    int nodenum = force3.outlayer.n_rows;
+    if ( isBilayerModel == false ){
+        rowvec out(3*nodenum);
+        #pragma omp parallel for
+        for (int i = 0; i < nodenum; i++){
+            out(3*i+0) = force3.outlayer(i,0);
+            out(3*i+1) = force3.outlayer(i,1);
+            out(3*i+2) = force3.outlayer(i,2);
+        }
+        return out;
+    }else{
+        rowvec out(3*nodenum * 3);
+        #pragma omp parallel for
+        for (int i = 0; i < nodenum; i++){
+            out(3*i+0) = force3.inlayer(i,0);
+            out(3*i+1) = force3.inlayer(i,1);
+            out(3*i+2) = force3.inlayer(i,2);
+        }
+        #pragma omp parallel for
+        for (int i = nodenum; i < nodenum*2; i++){
+            out(3*i+0) = force3.midlayer(i-nodenum,0);
+            out(3*i+1) = force3.midlayer(i-nodenum,1);
+            out(3*i+2) = force3.midlayer(i-nodenum,2);
+        }
+        #pragma omp parallel for
+        for (int i = nodenum*2; i < nodenum*3; i++){
+            out(3*i+0) = force3.outlayer(i-nodenum*2,0);
+            out(3*i+1) = force3.outlayer(i-nodenum*2,1);
+            out(3*i+2) = force3.outlayer(i-nodenum*2,2);
+        }
+        return out;
+    }
+}
+
 mat tomatrix(rowvec vertex_row){
     int nodenum = vertex_row.n_cols/3;
     mat vertex(nodenum,3);
@@ -1312,109 +1514,106 @@ mat tomatrix(rowvec vertex_row){
     return vertex;
 }
 
-mat setVMU(int n){
-    int dotsnumber = 1;
-    if (n==1){
-        dotsnumber = 1;
-        mat vmu(dotsnumber,3);
-        vmu << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr;
-        return vmu;
-    }else if(n==2){
-        dotsnumber = 3;
-        mat vmu(dotsnumber,3);
-        vmu << 1.0/6.0 << 1.0/6.0 << 4.0/6.0 << endr
-            << 1.0/6.0 << 4.0/6.0 << 1.0/6.0 << endr
-            << 4.0/6.0 << 1.0/6.0 << 1.0/6.0 << endr;
-        return vmu;
-    }else if(n==3){
-        dotsnumber = 4;
-        mat vmu(dotsnumber,3);
-        vmu << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr
-            << 1.0/5.0 << 1.0/5.0 << 3.0/5.0 << endr
-            << 1.0/5.0 << 3.0/5.0 << 1.0/5.0 << endr
-            << 3.0/5.0 << 1.0/5.0 << 1.0/5.0 << endr;
-        /*
-        vmu << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr
-            << 2.0/15.0 << 11.0/15.0 << 2.0/15.0 << endr
-            << 2.0/15.0 << 2.0/15.0 << 11.0/15.0 << endr
-            << 11.0/15.0 << 2.0/15.0 << 2.0/15.0 << endr;
-        */
-        return vmu;
-    }else if(n==4){
-        dotsnumber = 6;
-        mat vmu(dotsnumber,3);
-        vmu << 0.44594849091597 << 0.44594849091597 << 0.10810301816807 << endr
-            << 0.44594849091597 << 0.10810301816807 << 0.44594849091597 << endr
-            << 0.10810301816807 << 0.44594849091597 << 0.44594849091597 << endr
-            << 0.09157621350977 << 0.09157621350977 << 0.81684757298046 << endr
-            << 0.09157621350977 << 0.81684757298046 << 0.09157621350977 << endr
-            << 0.81684757298046 << 0.09157621350977 << 0.09157621350977 << endr;
-        return vmu;
-    }else if(n==5){
-        dotsnumber = 7;
-        mat vmu(dotsnumber,3);
-        vmu << 0.33333333333333 << 0.33333333333333 << 0.33333333333333 << endr
-            << 0.47014206410511 << 0.47014206410511 << 0.05971587178977 << endr
-            << 0.47014206410511 << 0.05971587178977 << 0.47014206410511 << endr
-            << 0.05971587178977 << 0.47014206410511 << 0.47014206410511 << endr
-            << 0.10128650732346 << 0.10128650732346 << 0.79742698535309 << endr
-            << 0.10128650732346 << 0.79742698535309 << 0.10128650732346 << endr
-            << 0.79742698535309 << 0.10128650732346 << 0.10128650732346 << endr;
-        return vmu;
-    }else if(n==6){
-        dotsnumber = 12;
-        mat vmu(dotsnumber,3);
-        vmu << 0.24928674517091 << 0.24928674517091 << 0.50142650965818 << endr
-            << 0.24928674517091 << 0.50142650965818 << 0.24928674517091 << endr
-            << 0.50142650965818 << 0.24928674517091 << 0.24928674517091 << endr
-            << 0.06308901449150 << 0.06308901449150 << 0.87382197101700 << endr
-            << 0.06308901449150 << 0.87382197101700 << 0.06308901449150 << endr
-            << 0.87382197101700 << 0.06308901449150 << 0.06308901449150 << endr
-            << 0.31035245103378 << 0.63650249912140 << 0.05314504984482 << endr
-            << 0.63650249912140 << 0.05314504984482 << 0.31035245103378 << endr
-            << 0.05314504984482 << 0.31035245103378 << 0.63650249912140 << endr
-            << 0.63650249912140 << 0.31035245103378 << 0.05314504984482 << endr
-            << 0.31035245103378 << 0.05314504984482 << 0.63650249912140 << endr
-            << 0.05314504984482 << 0.63650249912140 << 0.31035245103378 << endr;
-        return vmu;
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+// the following are about updates of boundary vertices, including their nodal forces and positions.
+
+mat manage_ghost_force(mat force, Mat<int> face, Param param){
+    mat fxyz = force;
+    if ( param.isFlatMembrane == false ) {
+        return fxyz;
     }
+    double sidex = param.sideX; double sidey = param.sideY; double l = param.meanL;
+    int n = round(sidex/l); double dx = sidex/n; // x axis division
+    double a = dx;
+    double dy = sqrt(3)/2 * a; 
+    int m = round(sidey/dy);      // y axis division 
+    if ( pow(-1.0,m) < 0.0 ) { m = m + 1; }
+    
+    int vertexnum = (n+1)*(m+1);
+    int facenum = m*n*2;
+    if ( param.isBoundaryFixed == true ){
+        #pragma omp parallel for 
+        for (int i = 0; i < facenum; i++){
+            if ( i < param.isBoundaryFace.n_cols && param.isBoundaryFace(i) == 1 ){
+                int node1 = face(i,0);
+                int node2 = face(i,1);
+                int node3 = face(i,2);
+                fxyz.row(node1) = force.row(node1) * 0.0;
+                fxyz.row(node2) = force.row(node2) * 0.0;
+                fxyz.row(node3) = force.row(node3) * 0.0;
+            }
+        }
+    }else if ( param.isBoundaryPeriodic == true ){
+        #pragma omp parallel for 
+        for (int i = 0; i < vertexnum; i++){
+            if ( i < param.isGhostVertex.n_cols && param.isGhostVertex(i) == 1 )
+                fxyz.row(i) = force.row(i) * 0.0;
+        }
+    }else if ( param.isBoundaryFree == true ){   
+        #pragma omp parallel for 
+        for ( int i = 0; i < vertexnum; i++ ){
+            if ( param.isBoundaryVertex(i) == 1 ){
+                fxyz.row(i) = force.row(i) * 0.0;
+            }
+        }
+    }
+    return fxyz;
 }
 
-rowvec setVMUcoefficient(int n){
-    int dotsnumber = 1;
-    if (n==1){
-        dotsnumber = 1;
-        rowvec vmucoeff(dotsnumber);
-        vmucoeff << 1.0 << endr;
-        return vmucoeff;
-    }else if(n==2){
-        dotsnumber = 3;
-        rowvec vmucoeff(dotsnumber);
-        vmucoeff << 1.0/3.0 << 1.0/3.0 << 1.0/3.0 << endr;
-        return vmucoeff;
-    }else if(n==3){
-        dotsnumber = 4;
-        rowvec vmucoeff(dotsnumber);
-        vmucoeff << -0.56250000000000 << 0.52083333333333 << 0.52083333333333 << 0.52083333333333 << endr;
-        return vmucoeff;
-    }else if(n==4){
-        dotsnumber = 6;
-        rowvec vmucoeff(dotsnumber);
-        vmucoeff << 0.22338158967801 << 0.22338158967801 << 0.22338158967801 << 0.10995174365532 << 0.10995174365532 << 0.10995174365532 << endr;
-        return vmucoeff;
-    }else if(n==5){
-        dotsnumber = 7;
-        rowvec vmucoeff(dotsnumber);
-        vmucoeff << 0.22500000000000 << 0.13239415278851 << 0.13239415278851 << 0.13239415278851 << 0.12593918054483 << 0.12593918054483 << 0.12593918054483 << endr;
-        return vmucoeff;
-    }else if(n==6){
-        dotsnumber = 12;
-        rowvec vmucoeff(dotsnumber);
-        vmucoeff << 0.11678627572638 << 0.11678627572638 << 0.11678627572638 << 0.05084490637021 << 0.05084490637021 << 0.05084490637021 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << 0.08285107561837 << endr;
-        return vmucoeff;
+mat update_vertex(mat vertex, Mat<int> face, double a, mat force, Param param){
+    mat vertexnew = vertex + a * force;
+    if ( param.isFlatMembrane == false ){
+        return vertexnew;
     }
-}
 
+    double sidex = param.sideX; double sidey = param.sideY; double l = param.meanL;
+    int n = round(sidex/l); double dx = sidex/n; // x axis division
+    double aa = dx;
+    double dy = sqrt(3)/2 * aa; 
+    int m = round(sidey/dy);      // y axis division 
+    if ( pow(-1.0,m) < 0.0 ) { m = m + 1; }
+    
+    int vertexnum = (n+1)*(m+1);
+    int facenum = m*n*2;
+
+    if ( param.isBoundaryFixed == true ){
+        Row<int> isBoundaryFace = param.isBoundaryFace;
+        #pragma omp parallel for 
+        for (int i = 0; i < facenum; i++){
+            if ( isBoundaryFace(i) != 1 )  
+                continue;
+            int node1 = face(i,0);
+            int node2 = face(i,1);
+            int node3 = face(i,2);
+            vertexnew.row(node1) = vertex.row(node1);
+            vertexnew.row(node2) = vertex.row(node2);
+            vertexnew.row(node3) = vertex.row(node3);
+        }
+    }else if ( param.isBoundaryPeriodic == true ){
+        vector<int> ghostPartner = param.ghostPartner;
+        #pragma omp parallel for 
+        for ( int i = 0; i < vertexnum; i++ ){
+            if ( ghostPartner[i] != -1 ){   
+                vertexnew.row(i) = vertex.row(i) + ( vertexnew.row(ghostPartner[i]) - vertex.row(ghostPartner[i]) );
+            }
+        }
+    }else if ( param.isBoundaryFree == true ){
+        vector<vector<int>> freePartners = param.freePartners;
+        for ( int i = 0; i < vertexnum; i++ ){ // Note: forbid to use parallelization here!
+            if ( freePartners[i][0] != -1 ){
+                int index1 = i; 
+                int index2 = freePartners[i][0];
+                int index3 = freePartners[i][1]; 
+                int index4 = freePartners[i][2];
+                vertexnew.row(index1) = vertexnew.row(index2) + vertexnew.row(index3) - vertexnew.row(index4);
+            }
+        }
+        
+    }
+    
+    return vertexnew;
+}
 
 
 /*
@@ -1735,7 +1934,7 @@ struct LocalFinerMesh{
     int centerVertexIndex;
     Row<int> sixVerticeHexagon;
     Row<int> faceIndex;
-    Row<int> outBoundaryRingFaceIndex;
+    //Row<int> outBoundaryRingFaceIndex;
 };
 
 vector<bool> determine_isLocallyFinerFace(Mat<int> face, LocalFinerMesh localFinerMesh){
@@ -1866,7 +2065,7 @@ Mat<int> select_local_face_for_finer(Mat<int> face, mat vertex, Mat<int> faces_w
     return selectFaces;
 }
 
-void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<int>& face, Mat<int>& faces_with_nodei, LocalFinerMesh& localFinerMesh){
+void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<int>& face, Mat<int>& faces_with_nodei, LocalFinerMesh& localFinerMesh, Row<int>& isBoundaryNode, Row<int>& isBoundaryFace, Row<int>& isGhostNode, Row<int>& isGhostFace, vector<int>& ghostPartner, vector<vector<int>>& freePartners){
     // find a center vertex, then select several rounds of faces around it. Note, all the faces must be regular patches. 
 
     int vertexnum = vertex.n_rows;
@@ -1974,7 +2173,18 @@ void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<i
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // update faces_with_nodei, because both vertex and face matrices are changed!
     faces_with_nodei = faces_with_vertexi(vertex, face); 
+    // update the boundary for vertice and faces. The newly added vertices and faces are not boundary or ghost! 
+    isBoundaryNode.resize(1, vertex.n_rows); 
+    for ( int i = vertexnum; i < vertex.n_rows; i++ ) isBoundaryNode(i) = -1;
+    isBoundaryFace.resize(1, face.n_rows); 
+    for ( int i = facenum; i < face.n_rows; i++ ) isBoundaryFace(i) = -1;
+    isGhostNode.resize(1, vertex.n_rows); 
+    for ( int i = vertexnum; i < vertex.n_rows; i++ ) isGhostNode(i) = -1;
+    isGhostFace.resize(1, face.n_rows); 
+    for ( int i = facenum; i < face.n_rows; i++ ) isGhostFace(i) = -1;
     
+    ghostPartner.resize(vertex.n_rows, -1);
+    freePartners.resize(vertex.n_rows, vector<int>(3, -1));
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // update localFinerMesh.faceIndex
     Row<int> addLocalFaceIndex;
@@ -2003,10 +2213,11 @@ void finer_local_mesh(int centerVertexIndex, int localRounds, mat& vertex, Mat<i
     }
 }
 
-void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double radiusForFinest, Mat<int>& faces_with_nodei, LocalFinerMesh& localFinerMesh){
-    
+void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double radiusForFinest, Mat<int>& faces_with_nodei, LocalFinerMesh& localFinerMesh, Row<int>& isBoundaryNode, Row<int>& isBoundaryFace, Row<int>& isGhostNode, Row<int>& isGhostFace, vector<int>& ghostPartner, vector<vector<int>>& freePartners ){  
+    // the smallest edge of the mesh, about half the lipid edge. The target edge length around the insertion is 0.5 nm. 
+    double targetEdge = 0.5; 
     if ( radiusForFinest < finestL ){
-        cout<<"   No need for local-finer, because the selected area is too small!" <<endl;
+        cout<<"   No need for local-finer, because the selected area is too small: Mesh finestL = " << finestL << " nm, RadiusForLocalFiner = " << radiusForFinest << " nm." <<endl;
         return;
     }
     
@@ -2021,25 +2232,23 @@ void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double
             centerVertexIndex = i;
         }
     }
-    
-    // the smallest edge of the mesh, about half the lipid edge. The target edge length around the insertion is 0.5 nm. 
-    double targetEdge = 0.5; 
 
     // determine how many times of local-finer are needed.
     int times = round(log2(finestL/targetEdge)); 
     
     if ( times < 1 ){
-        cout<<"   No need for local-finer, because the mesh is fine enough!" <<endl;
+        cout<<"   No need for local-finer, because the mesh is fine enough: Mesh finestL = " << finestL << " nm, TargetEdgeL = " << targetEdge << " nm." <<endl;
         return;
     }
 
     double radiusForFinestAdjusted = ceil( (radiusForFinest + 2.0/2.0) / finestL) * finestL;
     double radiusForLocalFiner = radiusForFinestAdjusted / pow(0.8, times-1);
+ 
     int localRounds = round( radiusForLocalFiner/finestL );
-    
+   
     if ( times >= 1){
         for ( int i = 0; i < times; i++ ){
-            finer_local_mesh(centerVertexIndex, localRounds, vertex, face, faces_with_nodei, localFinerMesh);
+            finer_local_mesh(centerVertexIndex, localRounds, vertex, face, faces_with_nodei, localFinerMesh, isBoundaryNode, isBoundaryFace, isGhostNode, isGhostFace, ghostPartner, freePartners);
             finestL = finestL/2.0; // after the finer, the smallest edge length
             int localRoundsAfterFiner = (localRounds-1) * 2 + 1; // after the finer, the local area has this number rounds of triangles 
             localRounds = localRoundsAfterFiner - 2;  // next times, this rounds of triangles will be finer.
@@ -2092,7 +2301,7 @@ void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double
                     }
                     localFinerMesh.sixVerticeHexagon(n) = nodetmp;
                 }
-            } // end of the six vertices of the hexagon, localFinerMesh.sixVerticeHexagon    
+            } // end of the six vertices of the hexagon, localFinerMesh.sixVerticeHexagon   
         } // end For loop of local finer mesh. 
 
         /////////////////////////////////////////////////////////////////////////////////////
@@ -2106,8 +2315,21 @@ void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double
             faceRearranged.row(i) =  face.row(faceindex);
         }
         face = faceRearranged;
+
         // update faces_with_nodei
-        faces_with_nodei = faces_with_vertexi(vertex, face); 
+        faces_with_nodei = faces_with_vertexi(vertex, face);   
+              
+        // update boundary face and ghost face
+        Row<int> isBoundaryFaceRearranged(face.n_rows);  isBoundaryFaceRearranged.fill(-1);
+        Row<int> isGhostFaceRearranged(face.n_rows); isGhostFaceRearranged.fill(-1);
+        for ( int i = 0; i < face.n_rows; i++ ){
+            int faceindex = faceIndex[i];
+            isBoundaryFaceRearranged(i) = isBoundaryFace(faceindex);
+            isGhostFaceRearranged(i)    = isGhostFace(faceindex);
+        }
+        isBoundaryFace = isBoundaryFaceRearranged;
+        isGhostFace    = isGhostFaceRearranged;
+        
         // update localFinerMesh.faceIndex (the local finer elements)
         for ( int i = 0; i < localFinerMesh.faceIndex.n_cols; i++ ){
             int faceindex_previous = localFinerMesh.faceIndex(i);
@@ -2124,36 +2346,19 @@ void build_local_finer_mesh(mat& vertex, Mat<int>& face, double& finestL, double
 }
 
 
-rowvec determine_finestEdgeLength(Mat<int> face, mat vertexin, mat vertexmid, mat vertexout, LocalFinerMesh localFinerMesh){
-    rowvec edgeLength(3); edgeLength.fill(0.0);
+rowvec determine_finestEdgeLength(Mat<int> face, Vertex3Layers vertex3, bool isBilayerModel, LocalFinerMesh localFinerMesh){
+    rowvec edgeLength(3); 
     // the 1st element is on the inner layer mesh
     // the 2nd element is on the middle layer mesh  
     // the 3rd element is on the outer layer mesh
     
+    mat vertexin = vertex3.inlayer;
+    mat vertexmid = vertex3.midlayer;
+    mat vertexout = vertex3.outlayer;
     if ( localFinerMesh.buildLocalFinerMesh == true ){
         // calculate the mean edge length of each local-finer-face.  
         Row<int> finerFaces = localFinerMesh.faceIndex;
-    
         rowvec edgeLengthEachFace(finerFaces.n_cols);
-        for ( int j = 0; j < finerFaces.n_cols; j++ ){
-            int i = finerFaces(j);
-            double sidelength1 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,1)),2);
-            double sidelength2 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,2)),2);
-            double sidelength3 = norm(vertexin.row(face(i,2))-vertexin.row(face(i,1)),2);
-            edgeLengthEachFace(j) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
-        }
-        edgeLength(0) = min(edgeLengthEachFace);
-
-        edgeLengthEachFace.fill(0.0);
-        for ( int j = 0; j < finerFaces.n_cols; j++ ){
-            int i = finerFaces(j);
-            double sidelength1 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,1)),2);
-            double sidelength2 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,2)),2);
-            double sidelength3 = norm(vertexmid.row(face(i,2))-vertexmid.row(face(i,1)),2);
-            edgeLengthEachFace(j) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
-        }
-        edgeLength(1) = min(edgeLengthEachFace);
-
         edgeLengthEachFace.fill(0.0);
         for ( int j = 0; j < finerFaces.n_cols; j++ ){
             int i = finerFaces(j);
@@ -2163,23 +2368,50 @@ rowvec determine_finestEdgeLength(Mat<int> face, mat vertexin, mat vertexmid, ma
             edgeLengthEachFace(j) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
         }
         edgeLength(2) = min(edgeLengthEachFace);
+        if ( isBilayerModel == true ){
+            edgeLengthEachFace.fill(0.0);
+            for ( int j = 0; j < finerFaces.n_cols; j++ ){
+                int i = finerFaces(j);
+                double sidelength1 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,1)),2);
+                double sidelength2 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,2)),2);
+                double sidelength3 = norm(vertexmid.row(face(i,2))-vertexmid.row(face(i,1)),2);
+                edgeLengthEachFace(j) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
+            }
+            edgeLength(1) = min(edgeLengthEachFace);
+
+            for ( int j = 0; j < finerFaces.n_cols; j++ ){
+                int i = finerFaces(j);
+                double sidelength1 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,1)),2);
+                double sidelength2 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,2)),2);
+                double sidelength3 = norm(vertexin.row(face(i,2))-vertexin.row(face(i,1)),2);
+                edgeLengthEachFace(j) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
+            }
+            edgeLength(0) = min(edgeLengthEachFace);
+        }else{
+            edgeLength(0) = edgeLength(2);
+            edgeLength(1) = edgeLength(2);
+        }
     }else{
         int i = 6; // select faceindex 6 as the sample
 
-        double sidelength1 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,1)),2);
-        double sidelength2 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,2)),2);
-        double sidelength3 = norm(vertexin.row(face(i,2))-vertexin.row(face(i,1)),2);
-        edgeLength(0) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
-
-        sidelength1 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,1)),2);
-        sidelength2 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,2)),2);
-        sidelength3 = norm(vertexmid.row(face(i,2))-vertexmid.row(face(i,1)),2);
-        edgeLength(1) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
-
-        sidelength1 = norm(vertexout.row(face(i,0))-vertexout.row(face(i,1)),2);
-        sidelength2 = norm(vertexout.row(face(i,0))-vertexout.row(face(i,2)),2);
-        sidelength3 = norm(vertexout.row(face(i,2))-vertexout.row(face(i,1)),2);
+        double sidelength1 = norm(vertexout.row(face(i,0))-vertexout.row(face(i,1)),2);
+        double sidelength2 = norm(vertexout.row(face(i,0))-vertexout.row(face(i,2)),2);
+        double sidelength3 = norm(vertexout.row(face(i,2))-vertexout.row(face(i,1)),2);
         edgeLength(2) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
+        if ( isBilayerModel == true ){
+            sidelength1 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,1)),2);
+            sidelength2 = norm(vertexmid.row(face(i,0))-vertexmid.row(face(i,2)),2);
+            sidelength3 = norm(vertexmid.row(face(i,2))-vertexmid.row(face(i,1)),2);
+            edgeLength(1) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
+
+            sidelength1 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,1)),2);
+            sidelength2 = norm(vertexin.row(face(i,0))-vertexin.row(face(i,2)),2);
+            sidelength3 = norm(vertexin.row(face(i,2))-vertexin.row(face(i,1)),2);
+            edgeLength(0) = 1.0/3.0 * ( sidelength1 + sidelength2 + sidelength3 );
+        }else{
+            edgeLength(0) = edgeLength(2);
+            edgeLength(1) = edgeLength(2);
+        }
     }
 
     return edgeLength;
@@ -2559,7 +2791,12 @@ Row<int> select_insertionPatchAdjacent(Mat<int> faceout, mat vertexout, Mat<int>
 // R is the radius of the sphere. 
 // h is the monolayer thickness, c0 is the monolayer spontaneous curvature, kc is the monolayer bending modulus. us is the monolayer area modulus.
 // 1 is the inner layer, and 2 is the outer layer
-double calculate_flipflopRatio(double R, double h1, double c01, double kc1, double us1, double h2, double c02, double kc2, double us2){
+double calculate_flipflopRatio(bool isFlatMembrane, double S0mid, double h1, double c01, double kc1, double us1, double h2, double c02, double kc2, double us2){
+    if (isFlatMembrane == true){
+        return 0.0;
+    }
+    
+    double R = sqrt(S0mid/4.0/M_PI);
     double gama1 = 0.0;
     double gama2 = 0.99;
     double gamatmp; // = 2.0 * R * h /(pow(R,2.0) + pow(h,2.0));
@@ -2578,8 +2815,8 @@ double calculate_flipflopRatio(double R, double h1, double c01, double kc1, doub
             leftHandtmp = us1 * pow((R-h1)/R,4.0)/pow(1.0-gamatmp,2.0) - us2 * pow((R+h2)/R,4.0)/pow(1.0+gamatmp,2.0) - (us1-us2); 
             if ( abs(gamatmp - gama1) < 1.0e-2 ){
                 cout<<"No acurate flip-flop ratio is found! But to use the approximate one!"<<endl;
-                exit(0);
-                //return 2.0 * R * h /(pow(R,2.0) + pow(h,2.0));
+                double h = (h1 + h2) / 2.0;
+                return 2.0 * R * h /(pow(R,2.0) + pow(h,2.0));
             }
         }
         gama1 = gama1;
@@ -2607,4 +2844,23 @@ double calculate_flipflopRatio(double R, double h1, double c01, double kc1, doub
      }
      double gama = 0.5 * (gama1 + gama2);
      return gama;
+}
+
+////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////
+// h01: thickness_in; h02, thickness_out
+void determine_Target_Height_for_Each_Monolayer(double h01, double h02, mat vertex, double& H0C1, double& H0C2){
+    double radiusOut = norm(vertex.row(0), 2);
+    // out-layer
+    double Cout = 1.0 / radiusOut; // mean curvature of the out-layer, sphere membrane
+    double C = Cout;
+    double h0 = h02;
+    H0C2 = h0 * ( 1.0 + 1.0*C*h0 ) + 2.0/3.0 * pow(h0,3.0) * pow(C,2.0); 
+
+    // in-layer
+    double radiusIn = radiusOut - h01 - h02; 
+    double Cin = 1.0 / radiusIn; // mean curvature of the in-layer, Flat membrane
+    C = -Cin;  // note the sign of the curvature of the inlayer is opposite to the one of the outlayer
+    h0 = h01;
+    H0C1 = h0 * ( 1.0 + 1.0*C*h0 ) + 2.0/3.0 * pow(h0,3.0) * pow(C,2.0); 
 }
