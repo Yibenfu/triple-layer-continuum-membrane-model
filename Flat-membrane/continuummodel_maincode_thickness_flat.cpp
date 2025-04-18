@@ -17,13 +17,13 @@ using namespace arma;
 // mesh parameters:
 bool   isFlatMembrane = true; 
 double l   = 2.07457 / 2;                        // triangular side length, nm
-double sideX  = 20.0;                            // rectangle sidelength x, nm
+double sideX  = 30.0;                            // rectangle sidelength x, nm
 double sideY  = sideX;                           // rectangle sidelength y, nm
-double radiusForLocalFiner = 4.0;                // the size of local finer mesh
+double radiusForLocalFiner = 7.0;                // the size of local finer mesh
 bool   isBoundaryFixed = true;                   // boundaries
 bool   isBoundaryPeriodic  = false;
 bool   isBoundaryFree = false;
-double k_regularization   = 0.0;//(1.0e1)*10.0*4.17;   // coefficient of the regulerization constraint, 
+double k_regularization   = (1.0e1)*10.0*4.17;   // coefficient of the regulerization constraint, 
 bool   usingRpi_viscousRegul = false;
 double gama_shape = 0.2;                         // factor of shape deformation
 double gama_area = 0.2;                          // factor of size deformation
@@ -53,7 +53,7 @@ double c0in  = c0out;                            // spontaneous curvature of mem
 double uv = 0.0;                               // coefficeint of the volume constraint, 0.5*uv*(dv)^2/v0;
 
 double Kthick_constraint = 1.0e3 * 2.5;// 1GPa * thickness_out; 1GPa = 1e3 pN/nm2
-int    stepsToIncreaseKthickConstraint = 100;//200; 
+int    stepsToIncreaseKthickConstraint = 100; 
 
 // external forces: tension
 double tension = 0.0;                            // pN/nm. 0.01~10
@@ -68,7 +68,7 @@ double c0out_ins  = 0.3;                         // spontaneous curvature of ins
 double s_insert  = sqrt(3.0)*l*l;                      // insertion area
 double insertLength = 2.0;                       // insertion size
 double insertWidth = 1.0; 
-double insert_dH0 = 0.05;                         // equilibrium value of thickness decrease induced by the insertion, nm
+double insert_dH0 = 0.2;                         // equilibrium value of thickness decrease induced by the insertion, nm
 double K_insertShape   = 10.0*us_out;            // spring constant for insertion zones, to constraint the insertion shape
 
 // parameters for simulation setup
@@ -436,20 +436,13 @@ int main() {
 
                break;
             }
-           
+
             { // gradually increase the coefficient of height-constraint
-                int stepsTarget = stepsToIncreaseKthickConstraint; // Every stepsTarget, coefficient will increase by Kthick_out 
-                if (insertionPatchNum > 0 ){
-                    if ( i < stepsTarget ){
-                        if ( i%10 == 0 && i > 0){
-                            param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsTarget * i;
-                        }
-                    }else{
-                        param.Kthick_constraint = Kthick_constraint;
+                if ( i <= stepsToIncreaseKthickConstraint ){
+                    if ( i % 10 == 0 && i > 0){
+                        param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsToIncreaseKthickConstraint  * i;
                     }
-                }else{
-                    param.Kthick_insertion = 0.0;
-                } 
+                }
             }
 
             // calculate the new force and energy
@@ -465,7 +458,7 @@ int main() {
                 mat shu1 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp1, isBilayerModel));
                 mat shu10 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp0, isBilayerModel)); 
                 double peta1 = shu1(0,0) / shu0(0,0); 
-                if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
+                //if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
                 s1.outlayer = ftemp1.outlayer + peta1 * s0.outlayer;
                 if ( isBilayerModel == true ){
                     s1.inlayer = ftemp1.inlayer + peta1 * s0.inlayer;
