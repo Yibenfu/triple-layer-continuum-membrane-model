@@ -16,12 +16,12 @@ using namespace arma;
 
 // mesh parameters:
 bool   isFlatMembrane = false;
-double sphereRadius   = 20.0;                     // sphere radius, nm
-double radiusForLocalFiner = 4.0;                // the size of local finer mesh
+double sphereRadius   = 15.0;                     // sphere radius, nm
+double radiusForLocalFiner = 6.0;                // the size of local finer mesh
 bool   isBoundaryFixed = false;                  // boundaries
 bool   isBoundaryPeriodic  = false;
 bool   isBoundaryFree = false;
-double k_regularization   = 0.0; //(1.0e1)*10.0*4.17;   // coefficient of the regulerization constraint, 
+double k_regularization   = (1.0e1)*10.0*4.17;   // coefficient of the regulerization constraint, 
 bool   usingRpi_viscousRegul = false;
 double gama_shape = 0.2;                         // factor of shape deformation
 double gama_area = 0.2;                          // factor of size deformation
@@ -33,13 +33,13 @@ bool   isBilayerModel = true;
 bool   isGlobalAreaConstraint = true;            // whether to use Global constraints for the area elasticity
 bool   includeDivTilt  = true;
 // out-layer (top layer)
-double kc_out  = 20.0*4.17/2.0;                  // pN.nm. bending modulus, out-monolayer 
+double kc_out  = 19.4*4.17/2.0;                  // pN.nm. bending modulus, out-monolayer 
 double kst_out = 17.2*4.17/2.0;                    // pN.nm . splay-tilt modulus, out-monolayer. refer to Markus Deserno, J. Chem. Phys. 151, 164108 (2019)
-double us_out  = 250.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
-double Ktilt_out  = 55.0;                        // pN/nm = mN/m. tilt modulus
+double us_out  = 265.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
+double Ktilt_out  = 89.0;                        // pN/nm = mN/m. tilt modulus
 double Kthick_out = 3.0 * Ktilt_out;             // pN/nm, coefficient of the membrane thickness. penalty term
-double thickness_out = 2.09/2.0;                 // nm, out-monolayer thickness. 
-double c0out = -0.0;                            // spontaneous curvature of membrane, out-layer. Convex is positive
+double thickness_out = 5.0/2.0;                 // nm, out-monolayer thickness. 
+double c0out = -0.04;                            // spontaneous curvature of membrane, out-layer. Convex is positive
 // in-layer (bottom layer)
 double kc_in  = kc_out;                          // pN.nm. bending modulus, in-monolayer 
 double kst_in = kst_out;                          // pN.nm . Guassian Curvature modulus, in-monolayer
@@ -51,7 +51,7 @@ double c0in  = c0out;                            // spontaneous curvature of mem
 double uv = 1.0e3;                               // coefficeint of the volume constraint, 0.5*uv*(dv)^2/v0;
 
 double Kthick_constraint = 1.0e3 * 2.5;// 1GPa * thickness_out; 1GPa = 1e3 pN/nm2
-int    stepsToIncreaseKthickConstraint = 200; 
+int    stepsToIncreaseKthickConstraint = 10; 
 
 // external forces: tension
 double tension = 0.0;                            // pN/nm. 0.01~10
@@ -62,11 +62,11 @@ double miu = 1.0;                                // volume constraint target
 int    insertionPatchNum = 1;                    // number of insertions
 bool   isInsertionsParallel = true;
 double distBetwn = 0.0;                          // distance between the insertions
-double c0out_ins  = 0.1;                         // spontaneous curvature of insertion, outer layer
+double c0out_ins  = 0.3;                         // spontaneous curvature of insertion, outer layer
 double s_insert  = 2.0;                          // insertion area
-double insertLength = 1.0;                       // insertion size
+double insertLength = 2.0;                       // insertion size
 double insertWidth = 1.0; 
-double insert_dH0 = 0.15;                         // equilibrium value of thickness decrease induced by the insertion, nm
+double insert_dH0 = 0.17;                         // equilibrium value of thickness decrease induced by the insertion, nm
 double K_insertShape   = 10.0*us_out;            // spring constant for insertion zones, to constraint the insertion shape
 
 // parameters for simulation setup
@@ -303,7 +303,7 @@ int main() {
         param.uv = uv;
         
         param.Kthick_constraint = Kthick_out;
-
+        
         // insertion parameters:
         param.insertionpatch = insertionpatch;
         param.isInsertionPatch = isInsertionPatch;            // labels of insertion patches. 
@@ -371,6 +371,7 @@ int main() {
                       param, elementS03, spontCurv3, deformnumbers, gqcoeff, shape_functions, subMatrix);
     exit(0);
     */
+    
     cout<<"14. The first run of 'Energy_and_Force', to generate the initial nodal force."<<endl;
     Energy_and_Force(face, vertex3, vertex3ref, one_ring_nodes,
                      param, elementS03, spontCurv3, energy, 
@@ -438,18 +439,11 @@ int main() {
                break;
             }
 
-            { // gradually increase the coefficient of height-constraint
-                int stepsTarget = stepsToIncreaseKthickConstraint; // Every stepsTarget, coefficient will increase by Kthick_out 
-                if (insertionPatchNum > 0 ){
-                    if ( i < stepsTarget ){
-                        if ( i%10 == 0 && i > 0){
-                            param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsTarget * i;
-                        }
-                    }else{
-                        param.Kthick_constraint = Kthick_constraint;
+            {// gradually increase the coefficient of height-constraint
+                if ( i <= stepsToIncreaseKthickConstraint ){
+                    if ( i % 10 == 0 && i > 0){
+                        param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsToIncreaseKthickConstraint * i;
                     }
-                }else{
-                    param.Kthick_insertion = 0.0;
                 } 
             }
 
@@ -466,7 +460,7 @@ int main() {
                 mat shu1 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp1, isBilayerModel));
                 mat shu10 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp0, isBilayerModel)); 
                 double peta1 = shu1(0,0) / shu0(0,0); 
-                if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
+                //if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
                 s1.outlayer = ftemp1.outlayer + peta1 * s0.outlayer;
                 if ( isBilayerModel == true ){
                     s1.inlayer = ftemp1.inlayer + peta1 * s0.inlayer;

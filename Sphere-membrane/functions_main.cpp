@@ -122,10 +122,10 @@ void Energy_and_Force(Mat<int> face, Vertex3Layers vertex3, Vertex3Layers vertex
             whichLayer = 0; 
             Eareain  = LocalAreaConstraintEnergy(whichLayer, vertex3.inlayer,  face,  one_ring_nodes,  param, param.isInsertionPatch.inlayer,  gqcoeff, shape_functions, subMatrix, 2.0*elementS03.inlayer );
         }
-        // volume constraint is only on the out-layer mesh
+        // volume constraint is only on the in-layer mesh
         double uv = param.uv;
-        double V0out = param.V0out; 
-        double Evolume = 0.5*uv/V0out * pow(Vout-V0out,2.0); 
+        double V0in = param.V0in; 
+        double Evolume = 0.5*uv/V0in * pow(Vin-V0in,2.0); 
         /////////////////////////////////////////////////////////////////////////
         // for for bending, height, splay-tilt, area and volume elasticity
         // for out-layer
