@@ -553,6 +553,7 @@ void element_energy_force_thickness_regular(bool isInsertionPatch, int whichLaye
     double h0 = param.H0C_out; //param.thickness_out;
     double kt = param.Kthick_out; // height modulus
     double kg = param.kst_out; // splay-tilt modulus, for tilt divergence
+    bool   includeDivTilt = param.includeDivTilt;
     if (whichLayer == 0){ // 0 means inLayer, 2 means outLayer
         S0 = param.S0in; V0 = param.V0in;
         S  = param.Sin;  V  = param.Vin;
@@ -570,6 +571,7 @@ void element_energy_force_thickness_regular(bool isInsertionPatch, int whichLaye
     }
     if ( isInsertionPatch == true ){
         h0 = h0 - param.insert_dH0;
+        includeDivTilt = false;
     }
     double ktpen = param.Kthick_constraint; 
     double ktinsert = param.Kthick_constraint; // param.Kthick_insertion;
@@ -651,14 +653,18 @@ void element_energy_force_thickness_regular(bool isInsertionPatch, int whichLaye
         double deltaShu = sqrt(3.0*eps*eps - 2.0*eps);
         double A1 = 0.5/eps/deltaShu *(3.0 - pow((3.0*eps-1.0)/deltaShu, 2.0));
         double B1 = (3.0*eps-1.0)/deltaShu - A1*eps*eps;
-        if ( param.includeDivTilt == true ){        
+        if ( includeDivTilt == true ){        
             if ( rho <= eps ){ // E1 branch;
                 dTilt_drho = (3.0*rho-1.0)/sqrt(3.0*rho*rho-2.0*rho); 
             }else if ( rho > eps ){ // E2 branch; Aims to make the energy function and its derivation continuous. 
                 dTilt_drho = A1*rho*rho + B1; 
             }
         }
-        double divTilt = dTilt_drho * (rho_1 + rho_2);
+        double divTilt = 1.0/sqrt(2.0) * dTilt_drho * (rho_1 + rho_2);
+        if ( whichLayer == 0 ) {
+            divTilt = - divTilt ;
+        }
+
         // curvature energy
         double Ebend = 0.5 * kc * pow(2.0*Hcurv + divTilt - c0, 2.0) * sqaout; 
         // curvature-tilt energy
@@ -710,7 +716,7 @@ void element_energy_force_thickness_regular(bool isInsertionPatch, int whichLaye
             // derivative of divTilt to rho
             rowvec divTilt_jout(3); divTilt_jout.fill(0);
             rowvec divTilt_jin(3);  divTilt_jin.fill(0);
-            if ( param.includeDivTilt == true ){
+            if ( includeDivTilt == true ){
                 rowvec rho_1_jout = 1.0/h0 *( sf(j,1)*dout + h_1*dout_j + sf(j,0)*d_1out + h*d_1out_j );
                 rowvec rho_2_jout = 1.0/h0 *( sf(j,2)*dout + h_2*dout_j + sf(j,0)*d_2out + h*d_2out_j );
                 rowvec rho_1_jin  = 1.0/h0 *( -sf(j,1)*dout - sf(j,0)*d_1out );
@@ -721,21 +727,28 @@ void element_energy_force_thickness_regular(bool isInsertionPatch, int whichLaye
                     rho_1_jin  = -rho_1_jin;
                     rho_2_jin  = -rho_2_jin;
                 }
+                
                 double ddTilt_drho2 = 0.0;
                 if ( rho <= eps ){ // E1 branch;
                     ddTilt_drho2 = 1.0/sqrt(3.0*rho*rho-2.0*rho) * ( 3.0 - pow(dTilt_drho,2.0) ); 
                 }else if ( rho > eps ){ // E2 branch; Aims to make the energy function and its derivation continuous. 
                     ddTilt_drho2 = 2.0 * A1 * rho; 
                 }
-                divTilt_jout = ddTilt_drho2*rho_jout*(rho_1+rho_2) + dTilt_drho*(rho_1_jout+rho_2_jout);
-                divTilt_jin  = ddTilt_drho2*rho_jin*(rho_1+rho_2) + dTilt_drho*(rho_1_jin+rho_2_jin);
-            }          
+                divTilt_jout = 1.0/sqrt(2.0) * ( ddTilt_drho2*rho_jout*(rho_1+rho_2) + dTilt_drho*(rho_1_jout+rho_2_jout) );
+                divTilt_jin  = 1.0/sqrt(2.0) * ( ddTilt_drho2*rho_jin*(rho_1+rho_2) + dTilt_drho*(rho_1_jin+rho_2_jin) );
+                
+                if ( whichLayer == 0 ){
+                    divTilt_jout = - divTilt_jout;
+                    divTilt_jin  = - divTilt_jin;
+                }
+            } 
+         
             // curvature force
             fout.row(j) = fout.row(j) + kc*(2.0*Hcurv+divTilt-c0)*sqaout*(2.0*Hcurv_j+divTilt_jout) + 0.5*kc*pow(2.0*Hcurv+divTilt-c0,2.0)*sqaout_j;
             fin.row(j)  = fin.row(j)  + kc*(2.0*Hcurv+divTilt-c0)*sqaout*( divTilt_jin );
             // curvature-tilt force
-            if ( param.includeDivTilt == true ){
-                fout.row(j) = fout.row(j) + 0.5*kg*(2.0*Hcurv_j+divTilt_jout)*divTilt*sqaout + 0.5*kg*(2.0*Hcurv+divTilt)*divTilt_jout*sqaout + 0.5*kg*0.5*kg*(2.0*Hcurv+divTilt)*divTilt*sqaout_j;
+            if ( includeDivTilt == true ){
+                fout.row(j) = fout.row(j) + 0.5*kg*(2.0*Hcurv_j+divTilt_jout)*divTilt*sqaout + 0.5*kg*(2.0*Hcurv+divTilt)*divTilt_jout*sqaout + 0.5*kg*(2.0*Hcurv+divTilt)*divTilt*sqaout_j;
                 fin.row(j)  = fin.row(j)  + 0.5*kg*( divTilt_jin )*divTilt*sqaout + 0.5*kg*(2.0*Hcurv+divTilt)*divTilt_jin*sqaout; 
             }
             // area and volume constraint

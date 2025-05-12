@@ -51,10 +51,10 @@ struct ElementV03Layers{
 };
 
 struct Param{
-    int currentStep;
-    bool includeDivTilt = false;
-    // mesh parameters:
     bool   isFlatMembrane = true;
+    int    currentStep;
+    bool   includeDivTilt = false;
+    // mesh parameters:
     double l;                                       // triangular side length, nm
     double sideX;                                   // rectangle sidelength x, nm
     double sideY;                                   // rectangle sidelength y, nm

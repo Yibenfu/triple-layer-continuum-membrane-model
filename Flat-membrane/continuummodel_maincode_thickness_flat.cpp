@@ -36,11 +36,11 @@ bool   isGlobalAreaConstraint = true;            // whether to use Global constr
 bool   includeDivTilt  = true;
 // out-layer (top layer)
 double kc_out  = 19.4*4.17/2.0;                  // pN.nm. bending modulus, out-monolayer 
-double kst_out = 17.2*4.17/2.0;                    // pN.nm . splay-tilt modulus, out-monolayer. refer to Markus Deserno, J. Chem. Phys. 151, 164108 (2019)
+double kst_out = 0.0;//17.2*4.17;                      // pN.nm . splay-tilt modulus, out-monolayer. refer to Markus Deserno, J. Chem. Phys. 151, 164108 (2019)
 double us_out  = 265.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
 double Ktilt_out  = 89.0;                        // pN/nm = mN/m. tilt modulus
 double Kthick_out = 3.0 * Ktilt_out;             // pN/nm, coefficient of the membrane thickness. penalty term
-double thickness_out = 5.0/2.0;                 // nm, out-monolayer thickness. 
+double thickness_out = 2.71/2.0;                 // nm, out-monolayer thickness. 
 double c0out = -0.04;                            // spontaneous curvature of membrane, out-layer. Convex is positive
 // in-layer (bottom layer)
 double kc_in  = kc_out;                          // pN.nm. bending modulus, in-monolayer 
@@ -53,7 +53,7 @@ double c0in  = c0out;                            // spontaneous curvature of mem
 double uv = 0.0;                               // coefficeint of the volume constraint, 0.5*uv*(dv)^2/v0;
 
 double Kthick_constraint = 1.0e3 * 2.5;// 1GPa * thickness_out; 1GPa = 1e3 pN/nm2
-int    stepsToIncreaseKthickConstraint = 200; 
+int    stepsToIncreaseKthickConstraint = 50; 
 
 // external forces: tension
 double tension = 0.0;                            // pN/nm. 0.01~10
@@ -68,7 +68,7 @@ double c0out_ins  = 0.3;                         // spontaneous curvature of ins
 double s_insert  = sqrt(3.0)*l*l;                      // insertion area
 double insertLength = 2.0;                       // insertion size
 double insertWidth = 1.0; 
-double insert_dH0 = 0.2;                         // equilibrium value of thickness decrease induced by the insertion, nm
+double insert_dH0 = 0.3;                         // equilibrium value of thickness decrease induced by the insertion, nm
 double K_insertShape   = 10.0*us_out;            // spring constant for insertion zones, to constraint the insertion shape
 
 // parameters for simulation setup
@@ -408,7 +408,7 @@ int main() {
     while ( isCriteriaSatisfied == false && i < N-1){
        // updates 
        param.currentStep = i; 
-       if ( i == 0 || i%50 == 0 ){
+       if ( i == 0 || i % 50 == 0 ){
            a0 = finestL/max(force3_scale(s0, isBilayerModel)); 
            if ( max(force3_scale(s0, isBilayerModel)) < 1.0e-9 ) a0 = 0.1;
            //if ( a0 > 1.0) a0 = 1.0; 
@@ -436,26 +436,20 @@ int main() {
 
                break;
             }
-           
+
             { // gradually increase the coefficient of height-constraint
-                int stepsTarget = stepsToIncreaseKthickConstraint; // Every stepsTarget, coefficient will increase by Kthick_out 
-                if (insertionPatchNum > 0 ){
-                    if ( i < stepsTarget ){
-                        if ( i%10 == 0 && i > 0){
-                            param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsTarget * i;
-                        }
-                    }else{
-                        param.Kthick_constraint = Kthick_constraint;
+                if ( i <= stepsToIncreaseKthickConstraint ){
+                    if ( i % 10 == 0 && i > 0){
+                        param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsToIncreaseKthickConstraint  * i;
                     }
-                }else{
-                    param.Kthick_insertion = 0.0;
-                } 
+                }
             }
 
             // calculate the new force and energy
             Energy_and_Force(face, vertex31, vertex3ref, one_ring_nodes, 
                             param, elementS03, spontCurv3, energy1, 
                             force31, deformnumbers, gqcoeff, shape_functions, subMatrix);
+
             // calculate the direction s
             Force3Layers ftemp1 = force31;
             //if ( param.isNCGstucked == false )
@@ -465,7 +459,7 @@ int main() {
                 mat shu1 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp1, isBilayerModel));
                 mat shu10 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp0, isBilayerModel)); 
                 double peta1 = shu1(0,0) / shu0(0,0); 
-                if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
+                //if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
                 s1.outlayer = ftemp1.outlayer + peta1 * s0.outlayer;
                 if ( isBilayerModel == true ){
                     s1.inlayer = ftemp1.inlayer + peta1 * s0.inlayer;
