@@ -40,7 +40,7 @@ double kst_out = 17.2*4.17/2.0;                    // pN.nm . splay-tilt modulus
 double us_out  = 265.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
 double Ktilt_out  = 89.0;                        // pN/nm = mN/m. tilt modulus
 double Kthick_out = 3.0 * Ktilt_out;             // pN/nm, coefficient of the membrane thickness. penalty term
-double thickness_out = 2.71/2.0;                 // nm, out-monolayer thickness. 
+double thickness_out = 5.0/2.0;                 // nm, out-monolayer thickness. 
 double c0out = -0.04;                            // spontaneous curvature of membrane, out-layer. Convex is positive
 // in-layer (bottom layer)
 double kc_in  = kc_out;                          // pN.nm. bending modulus, in-monolayer 
@@ -53,7 +53,7 @@ double c0in  = c0out;                            // spontaneous curvature of mem
 double uv = 0.0;                               // coefficeint of the volume constraint, 0.5*uv*(dv)^2/v0;
 
 double Kthick_constraint = 1.0e3 * 2.5;// 1GPa * thickness_out; 1GPa = 1e3 pN/nm2
-int    stepsToIncreaseKthickConstraint = 100; 
+int    stepsToIncreaseKthickConstraint = 200; 
 
 // external forces: tension
 double tension = 0.0;                            // pN/nm. 0.01~10
@@ -436,13 +436,20 @@ int main() {
 
                break;
             }
-
+           
             { // gradually increase the coefficient of height-constraint
-                if ( i <= stepsToIncreaseKthickConstraint ){
-                    if ( i % 10 == 0 && i > 0){
-                        param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsToIncreaseKthickConstraint  * i;
+                int stepsTarget = stepsToIncreaseKthickConstraint; // Every stepsTarget, coefficient will increase by Kthick_out 
+                if (insertionPatchNum > 0 ){
+                    if ( i < stepsTarget ){
+                        if ( i%10 == 0 && i > 0){
+                            param.Kthick_constraint = Kthick_out + (Kthick_constraint - Kthick_out)/stepsTarget * i;
+                        }
+                    }else{
+                        param.Kthick_constraint = Kthick_constraint;
                     }
-                }
+                }else{
+                    param.Kthick_insertion = 0.0;
+                } 
             }
 
             // calculate the new force and energy
@@ -458,7 +465,7 @@ int main() {
                 mat shu1 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp1, isBilayerModel));
                 mat shu10 =  changeForce3ToVector(ftemp1, isBilayerModel) * strans(changeForce3ToVector(ftemp0, isBilayerModel)); 
                 double peta1 = shu1(0,0) / shu0(0,0); 
-                //if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
+                if ( param.duringStepsToIncreaseInsertDepth == true ) peta1 = 0.0;
                 s1.outlayer = ftemp1.outlayer + peta1 * s0.outlayer;
                 if ( isBilayerModel == true ){
                     s1.inlayer = ftemp1.inlayer + peta1 * s0.inlayer;
@@ -501,8 +508,8 @@ int main() {
        // check whether to stop. if the total energy is flat, then stop
        if ( insertionPatchNum < 1 ){
            int checkSteps = 10;
-           //if ( MaxForce(i) < criterion_force ){
-           if ( MeanForce(i) < criterion_force ){
+           if ( MaxForce(i) < criterion_force ){
+           //if ( MeanForce(i) < criterion_force ){
                 cout<<"The energy is minimized. Stop now!"<<endl;
                 isCriteriaSatisfied = true;
                 break;
@@ -510,8 +517,8 @@ int main() {
        }else{
            if ( i > stepsToIncreaseKthickConstraint ){
                 // two ways to judge whether minimized
-                //if ( MaxForce(i) < criterion_force ){
-                if ( MeanForce(i) < criterion_force ){
+                if ( MaxForce(i) < criterion_force ){
+                //if ( MeanForce(i) < criterion_force ){
                     cout<<"The energy is minimized. Stop now!"<<endl;
                     isCriteriaSatisfied = true;
                     break;
