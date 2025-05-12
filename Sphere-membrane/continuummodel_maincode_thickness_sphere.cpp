@@ -16,8 +16,8 @@ using namespace arma;
 
 // mesh parameters:
 bool   isFlatMembrane = false;
-double sphereRadius   = 15.0;                     // sphere radius, nm
-double radiusForLocalFiner = 6.0;                // the size of local finer mesh
+double sphereRadius   = 90.0;                     // sphere radius, nm
+double radiusForLocalFiner = 9.0;                // the size of local finer mesh
 bool   isBoundaryFixed = false;                  // boundaries
 bool   isBoundaryPeriodic  = false;
 bool   isBoundaryFree = false;
@@ -34,11 +34,11 @@ bool   isGlobalAreaConstraint = true;            // whether to use Global constr
 bool   includeDivTilt  = true;
 // out-layer (top layer)
 double kc_out  = 19.4*4.17/2.0;                  // pN.nm. bending modulus, out-monolayer 
-double kst_out = 17.2*4.17/2.0;                    // pN.nm . splay-tilt modulus, out-monolayer. refer to Markus Deserno, J. Chem. Phys. 151, 164108 (2019)
+double kst_out = 0.0;//17.2*4.17;                    // pN.nm . splay-tilt modulus, out-monolayer. refer to Markus Deserno, J. Chem. Phys. 151, 164108 (2019)
 double us_out  = 265.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
 double Ktilt_out  = 89.0;                        // pN/nm = mN/m. tilt modulus
 double Kthick_out = 3.0 * Ktilt_out;             // pN/nm, coefficient of the membrane thickness. penalty term
-double thickness_out = 5.0/2.0;                 // nm, out-monolayer thickness. 
+double thickness_out = 2.71/2.0;                 // nm, out-monolayer thickness. 
 double c0out = -0.04;                            // spontaneous curvature of membrane, out-layer. Convex is positive
 // in-layer (bottom layer)
 double kc_in  = kc_out;                          // pN.nm. bending modulus, in-monolayer 
@@ -51,7 +51,7 @@ double c0in  = c0out;                            // spontaneous curvature of mem
 double uv = 1.0e3;                               // coefficeint of the volume constraint, 0.5*uv*(dv)^2/v0;
 
 double Kthick_constraint = 1.0e3 * 2.5;// 1GPa * thickness_out; 1GPa = 1e3 pN/nm2
-int    stepsToIncreaseKthickConstraint = 10; 
+int    stepsToIncreaseKthickConstraint = 100; 
 
 // external forces: tension
 double tension = 0.0;                            // pN/nm. 0.01~10
@@ -71,7 +71,7 @@ double K_insertShape   = 10.0*us_out;            // spring constant for insertio
 
 // parameters for simulation setup
 int    N   = 1e5;                                // total step of iteration
-double criterion_force = 1.0e-3;                 // critera for the equilibrium of the simulation
+double criterion_force = 1.0e-2;                 // critera for the equilibrium of the simulation
 double criterion_E = 2.0e-5; 
 double criterion_S = 1e-5;
 double criterion_V = 1e-5;
@@ -410,7 +410,7 @@ int main() {
     while ( isCriteriaSatisfied == false && i < N-1){
         // updates
         param.currentStep = i; 
-        if ( i == 0 || i%50 == 0 ){
+        if ( i == 0 || i % 50 == 0 ){
            a0 = finestL/max(force3_scale(s0, isBilayerModel)); 
            if ( max(force3_scale(s0, isBilayerModel)) < 1.0e-9 ) a0 = 0.1;
            //if ( a0 > 1.0) a0 = 1.0; 
@@ -433,8 +433,7 @@ int main() {
                printoutstuck(vertex30.outlayer);
 
                cout<<"Check whether the nodal force is correctly calculated: "<<endl;
-               check_nodal_force(face, vertex30, vertex3ref, one_ring_nodes, 
-                      param, elementS03, spontCurv3, deformnumbers, gqcoeff, shape_functions, subMatrix);
+               check_nodal_force(face, vertex30, vertex3ref, one_ring_nodes, param, elementS03, spontCurv3, deformnumbers, gqcoeff, shape_functions, subMatrix);
 
                break;
             }
@@ -504,7 +503,6 @@ int main() {
         // check whether to stop. if the total energy is flat, then stop
         // check whether to stop. if the total energy is flat for 100 simulation steps, then stop
         if ( insertionPatchNum < 1 ){
-            int checkSteps = 10;
             //if ( MaxForce(i) < criterion_force ){
             if ( MeanForce(i) < criterion_force ){
                 cout<<"The energy is minimized. End of the while loop!"<<endl;
@@ -533,7 +531,7 @@ int main() {
 
         // output the energy and nodal force 
         ofstream outfile2("energy_force.csv"); 
-        outfile2 << "E_bending" << ',' << "Einsert" << ',' << "Ethick" << ',' << "Etilt" << ',' << "E_constraint" << ',' << "E_regularization" << ',' << "E_total" << ',' << "E_re/E_tot" << ',' << "S/S0" << ',' << "V/V0" << ',' << "meanF" << ',' << "maxF" << '\n';
+        outfile2 << "E_bending" << ',' << "E_insert" << ',' << "E_thick" << ',' << "E_splayTilt" << ',' << "E_constraint" << ',' << "E_regularization" << ',' << "E_total" << ',' << "E_re/E_tot" << ',' << "S/S0" << ',' << "V/V0" << ',' << "meanF" << ',' << "maxF" << '\n';
         for (int j = 0; j <= i; j++) {
             Ere_vs_Etot = (Energy(j,5)+0.0)/(Energy(j,6)+0.0);
             outfile2 << Energy(j,0)+0.0 << ',' << Energy(j,1)+0.0 << ',' << Energy(j,2)+0.0 << ',' << Energy(j,3)+0.0 << ',' << Energy(j,4)+0.0 << ',' << Energy(j,5)+0.0 << ',' << Energy(j,6)+0.0 << ',' << Ere_vs_Etot << ',' << totalarea(j)/S0in << ',' << totalvolume(j)/V0in << ',' << MeanForce(j) << ',' << MaxForce(j) << '\n';
