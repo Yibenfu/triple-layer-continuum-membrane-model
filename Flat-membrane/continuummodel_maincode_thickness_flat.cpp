@@ -33,10 +33,10 @@ int    GaussQuadratureN = 2;                     // Gaussian quadrature integral
 // membrane parameters: 
 bool   isBilayerModel = true;
 bool   isGlobalAreaConstraint = true;            // whether to use Global constraints for the area elasticity
-bool   includeDivTilt  = true;
+bool   includeDivTilt  = false;
 // out-layer (top layer)
 double kc_out  = 19.4*4.17/2.0;                  // pN.nm. bending modulus, out-monolayer 
-double kst_out = 0.0;//17.2*4.17;                      // pN.nm . splay-tilt modulus, out-monolayer. refer to Markus Deserno, J. Chem. Phys. 151, 164108 (2019)
+double kst_out = 0.0; // 17.2*4.17;              // pN.nm. splay-tilt modulus, out-monolayer. refer to Markus Deserno, J. Chem. Phys. 151, 164108 (2019)
 double us_out  = 265.0/2.0;                      // pN/nm, area stretching modulus, out-monolayer; 0.5*us*(ds)^2/s0;
 double Ktilt_out  = 89.0;                        // pN/nm = mN/m. tilt modulus
 double Kthick_out = 3.0 * Ktilt_out;             // pN/nm, coefficient of the membrane thickness. penalty term
@@ -68,7 +68,7 @@ double c0out_ins  = 0.3;                         // spontaneous curvature of ins
 double s_insert  = sqrt(3.0)*l*l;                      // insertion area
 double insertLength = 2.0;                       // insertion size
 double insertWidth = 1.0; 
-double insert_dH0 = 0.3;                         // equilibrium value of thickness decrease induced by the insertion, nm
+double insert_dH0 = 0.1;                         // equilibrium value of thickness decrease induced by the insertion, nm
 double K_insertShape   = 10.0*us_out;            // spring constant for insertion zones, to constraint the insertion shape
 
 // parameters for simulation setup
@@ -502,8 +502,8 @@ int main() {
        // check whether to stop. if the total energy is flat, then stop
        if ( insertionPatchNum < 1 ){
            int checkSteps = 10;
-           if ( MaxForce(i) < criterion_force ){
-           //if ( MeanForce(i) < criterion_force ){
+           //if ( MaxForce(i) < criterion_force ){
+           if ( MeanForce(i) < criterion_force ){
                 cout<<"The energy is minimized. Stop now!"<<endl;
                 isCriteriaSatisfied = true;
                 break;
@@ -511,8 +511,8 @@ int main() {
        }else{
            if ( i > stepsToIncreaseKthickConstraint ){
                 // two ways to judge whether minimized
-                if ( MaxForce(i) < criterion_force ){
-                //if ( MeanForce(i) < criterion_force ){
+                //if ( MaxForce(i) < criterion_force ){
+                if ( MeanForce(i) < criterion_force ){
                     cout<<"The energy is minimized. Stop now!"<<endl;
                     isCriteriaSatisfied = true;
                     break;
